@@ -25,20 +25,30 @@ Ve a la [última release](https://github.com/Sugestion-Studio/amautum-transcript
 
 > Para una guía paso a paso de instalación (con los avisos típicos de cada sistema operativo), visita [amautum.com/downloads/transcriptor](https://www.amautum.com/downloads/transcriptor).
 
-### macOS: aviso "está dañada y no se puede abrir"
+### macOS: aviso "could not verify… is free of malware"
 
-Mientras no tengamos firma con Developer ID de Apple, macOS rechazará la app con ese mensaje **falsa alarma**. Para autorizarla:
+Como esta app no está notarizada por Apple (cuesta USD 99/año), macOS Sequoia (15+) la bloquea por defecto. Es procedimiento estándar para apps de desarrolladores independientes — **no significa que la app sea dañina**. Para autorizarla (~4 clics, solo una vez por versión):
 
 1. Mueve `Amautum Transcriptor.app` a la carpeta Aplicaciones.
-2. Abre Terminal y pega:
+2. Quita la etiqueta de cuarentena desde Terminal:
 
    ```bash
    xattr -cr "/Applications/Amautum Transcriptor.app"
    ```
 
-3. Abre la app con doble clic desde Aplicaciones. A partir de ahora se comporta como cualquier otra.
+3. Doble clic sobre la app. Aparece el aviso "could not verify…". Haz clic en **Done** (no en "Move to Trash").
+4. Abre System Settings → Privacy & Security (atajo desde Terminal):
 
-Si te pide contraseña, usa: `sudo xattr -dr com.apple.quarantine "/Applications/Amautum Transcriptor.app"`.
+   ```bash
+   open "x-apple.systempreferences:com.apple.preference.security?General"
+   ```
+
+5. Baja hasta la sección **Security**. Verás el mensaje "Amautum Transcriptor was blocked…" y un botón **Open Anyway**. Clic, autentica con Touch ID o contraseña.
+6. Doble clic la app de nuevo. Un diálogo más suave aparece: "macOS cannot verify the developer… Are you sure you want to open?". Clic **Open**.
+
+A partir de ahora abre con doble clic limpio — esta versión queda whitelisteada en tu Mac para siempre. Solo tendrás que repetir el ritual cuando salga una versión nueva.
+
+> ¿Por qué no podemos firmar la app y evitarte esto? El programa "Apple Developer" cuesta USD 99/año y requiere persona jurídica establecida; lo añadiremos cuando el producto madure. El código fuente de este repositorio te da garantías técnicas de privacidad que ninguna firma de Apple aporta.
 
 ### Windows: SmartScreen "Windows protegió tu PC"
 
