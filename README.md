@@ -25,6 +25,25 @@ Ve a la [última release](https://github.com/Sugestion-Studio/amautum-transcript
 
 > Para una guía paso a paso de instalación (con los avisos típicos de cada sistema operativo), visita [amautum.com/downloads/transcriptor](https://www.amautum.com/downloads/transcriptor).
 
+### macOS: aviso "está dañada y no se puede abrir"
+
+Mientras no tengamos firma con Developer ID de Apple, macOS rechazará la app con ese mensaje **falsa alarma**. Para autorizarla:
+
+1. Mueve `Amautum Transcriptor.app` a la carpeta Aplicaciones.
+2. Abre Terminal y pega:
+
+   ```bash
+   xattr -cr "/Applications/Amautum Transcriptor.app"
+   ```
+
+3. Abre la app con doble clic desde Aplicaciones. A partir de ahora se comporta como cualquier otra.
+
+Si te pide contraseña, usa: `sudo xattr -dr com.apple.quarantine "/Applications/Amautum Transcriptor.app"`.
+
+### Windows: SmartScreen "Windows protegió tu PC"
+
+Es el equivalente: como el `.msi` no está firmado, SmartScreen pregunta. Haz clic en **Más información** → **Ejecutar de todos modos**. La firma con certificado EV está en la lista de cosas por hacer (ver `.github/workflows/release.yml`).
+
 ## ¿Cómo funciona?
 
 ```
