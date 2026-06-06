@@ -103,10 +103,12 @@ pub fn run() {
                 }
             });
 
-            // Health check de los sidecars al arrancar. Si están bien, marcamos
-            // `dependencies_ok = true` y la web verá "Agente listo". Si no, la
-            // web verá "Agente con problemas" y puede llamar a /diagnostics
-            // para mostrar el detalle al operador.
+            // Health check de los sidecars al arrancar. `dependencies_ok`
+            // arranca en `true` (optimista) y SOLO bajamos a `false` si el
+            // probe confirma un problema. Si por cualquier motivo el probe
+            // mismo no se puede correr (sidecar perdido al spawn), eso cuenta
+            // como confirmación. Si tarda 200 ms en correr, el navegador no
+            // ve un `false` espurio durante esos 200 ms.
             let app_for_probe = app.handle().clone();
             let deps_flag = state.dependencies_ok.clone();
             tauri::async_runtime::spawn(async move {
@@ -119,14 +121,16 @@ pub fn run() {
                         whisper_cli = ?whisper,
                         "Sidecars no responden al --version inicial"
                     );
+                    deps_flag.store(false, std::sync::atomic::Ordering::SeqCst);
                 } else {
                     tracing::info!(
                         ffmpeg = ?ffmpeg.as_ref().ok(),
                         whisper_cli = ?whisper.as_ref().ok(),
                         "Sidecars verificados"
                     );
+                    // Reafirmamos `true` por si alguien lo cambió. No-op si ya estaba.
+                    deps_flag.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
-                deps_flag.store(ok, std::sync::atomic::Ordering::SeqCst);
             });
 
             Ok(())

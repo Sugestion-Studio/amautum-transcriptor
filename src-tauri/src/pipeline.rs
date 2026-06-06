@@ -43,7 +43,12 @@ impl AppState {
         Self {
             ws_hub: WsHub::new(),
             running: Arc::new(AtomicUsize::new(0)),
-            dependencies_ok: Arc::new(AtomicBool::new(false)),
+            // Optimista: defaulteamos a `true`. El probe corre en background
+            // al arrancar y solo flippea a `false` si confirma un problema.
+            // Sin esto el navegador veía `dependenciesOk: false` durante el
+            // primer segundo y pintaba "Agente con componentes faltantes"
+            // aunque todo estuviera bien.
+            dependencies_ok: Arc::new(AtomicBool::new(true)),
         }
     }
 }
