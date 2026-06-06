@@ -1,6 +1,6 @@
 [package]
 name = "amautum-transcriptor-agent"
-version = "0.1.1"
+version = "0.1.2"
 description = "Agente local de transcripción de audiencias con Whisper.cpp para Amautum"
 authors = ["Amautum"]
 edition = "2021"
@@ -38,6 +38,7 @@ thiserror = "1"
 anyhow = "1"
 once_cell = "1"
 dashmap = "6"
+parking_lot = "0.12"
 tempfile = "3"
 
 # Logging

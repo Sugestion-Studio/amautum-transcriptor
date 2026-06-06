@@ -200,7 +200,18 @@ async fn ws_handler(
 
 async fn ws_session(socket: WebSocket, state: AppState, job_id: String) {
     let (mut tx, mut rx) = socket.split();
-    let mut events = state.ws_hub.subscribe(&job_id);
+    let (mut events, last_event) = state.ws_hub.subscribe(&job_id);
+
+    // Replay del último evento publicado en este job (si lo hubo). Cierra la
+    // race entre `POST /jobs/start` y la conexión WS: sin esto, los primeros
+    // 1-3 eventos del pipeline se perdían y el cliente quedaba en silencio.
+    if let Some(ev) = last_event {
+        if let Ok(payload) = serde_json::to_string(&ev) {
+            if tx.send(Message::Text(payload)).await.is_err() {
+                return;
+            }
+        }
+    }
 
     // Tarea de ping para evitar que un proxy local mate la conexión idle.
     let ping = tokio::spawn(async move {
