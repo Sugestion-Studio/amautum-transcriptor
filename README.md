@@ -85,7 +85,7 @@ Los releases se publican automáticamente en este repositorio cuando se empuja u
 
 Para usuarios finales: [usa siempre la última versión publicada](https://github.com/Sugestion-Studio/amautum-transcriptor/releases/latest).
 
-Para administradores de TI: cada release viene con sus checksums SHA-256 y, cuando aplica, con la firma del código de Sugestion Studio S.A.
+Para administradores de TI: cada release viene con sus checksums SHA-256 y, cuando aplica, con la firma del código de Sugestion S.A.S
 
 ## Soporte
 
@@ -95,4 +95,4 @@ Para administradores de TI: cada release viene con sus checksums SHA-256 y, cuan
 
 ## Licencia
 
-[MIT](./LICENSE) © Sugestion Studio S.A.
+[MIT](./LICENSE) © Sugestion S.A.S
