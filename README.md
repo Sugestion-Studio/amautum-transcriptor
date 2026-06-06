@@ -28,7 +28,7 @@ Ve a la [última release](https://github.com/Sugestion-Studio/amautum-transcript
 
 ### macOS: aviso "could not verify… is free of malware"
 
-Como esta app no está notarizada por Apple (cuesta USD 99/año), macOS Sequoia (15+) la bloquea por defecto. Es procedimiento estándar para apps de desarrolladores independientes — **no significa que la app sea dañina**. Para autorizarla (~4 clics, solo una vez por versión):
+Como esta versión del agente todavía no está firmada con Developer ID de Apple, macOS Sequoia (15+) la bloquea por defecto. Es procedimiento estándar para apps de desarrolladores independientes — **no significa que la app sea dañina**. Para autorizarla (~4 clics, solo una vez por versión):
 
 1. Mueve `Amautum Transcriptor.app` a la carpeta Aplicaciones.
 2. Quita la etiqueta de cuarentena desde Terminal:
@@ -49,7 +49,7 @@ Como esta app no está notarizada por Apple (cuesta USD 99/año), macOS Sequoia 
 
 A partir de ahora abre con doble clic limpio — esta versión queda whitelisteada en tu Mac para siempre. Solo tendrás que repetir el ritual cuando salga una versión nueva.
 
-> ¿Por qué no podemos firmar la app y evitarte esto? El programa "Apple Developer" cuesta USD 99/año y requiere persona jurídica establecida; lo añadiremos cuando el producto madure. El código fuente de este repositorio te da garantías técnicas de privacidad que ninguna firma de Apple aporta.
+> La firma con Developer ID de Apple está en nuestra hoja de ruta — se añadirá en una próxima versión y este aviso desaparecerá. Mientras tanto, el código fuente de este repositorio te da garantías técnicas de privacidad que ninguna firma de Apple aporta.
 
 ### Windows: SmartScreen "Windows protegió tu PC"
 
@@ -107,7 +107,7 @@ Los instaladores quedan en `src-tauri/target/release/bundle/`.
 - ✅ El audio nunca sale del equipo donde corre la app.
 - ✅ La comunicación entre el navegador y la app local usa CORS estricto: solo `amautum.com` puede hablar con ella.
 - ✅ Cada trabajo recibe un token de un solo uso firmado por Amautum; sin sesión activa el agente no puede subir nada.
-- ✅ Código abierto bajo licencia MIT — auditá lo que quieras.
+- ✅ Código abierto bajo licencia MIT — audita lo que quieras.
 
 ## Releases
 
