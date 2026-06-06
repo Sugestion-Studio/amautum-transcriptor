@@ -51,9 +51,6 @@
       "binaries/whisper-cli",
       "binaries/ffmpeg"
     ],
-    "resources": [
-      "binaries/models/*"
-    ],
     "macOS": {
       "minimumSystemVersion": "11.0"
     }
