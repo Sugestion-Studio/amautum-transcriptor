@@ -1,0 +1,220 @@
+# Compila el agente para macOS (arm64 + x64), Windows y Linux y publica los
+# instaladores como assets de una GitHub Release. Se dispara automáticamente al
+# empujar un tag `v*` (ej. `v0.1.0`) o manualmente desde la pestaña Actions.
+#
+# IMPORTANTE — antes del PRIMER release necesitas resolver dos cosas en este
+# workflow (marcadas como TODO):
+#
+#   1. Cómo conseguir el binario de `whisper-cli` para cada plataforma.
+#      Hoy lo dejamos compilado in-line desde whisper.cpp (~5–10 min por SO).
+#      Si tienes binarios pre-compilados en un bucket, cámbialo a `curl -L ...`.
+#
+#   2. Code-signing y notarización. Para macOS y Windows necesitas certificados
+#      y secretos configurados en el repo (Settings → Secrets). Mientras no los
+#      tengas, el instalador funciona pero el usuario verá el aviso de "app sin
+#      verificar" al primer arranque.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versión a publicar (ej. v0.1.0). Solo crea draft."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            os_name: macos
+            arch_name: arm64
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            os_name: macos
+            arch_name: x64
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            os_name: linux
+            arch_name: x64
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            os_name: windows
+            arch_name: x64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Cache whisper.cpp build
+        id: cache-whisper
+        uses: actions/cache@v4
+        with:
+          path: whisper.cpp-build
+          key: whisper-${{ matrix.target }}-v1
+
+      # TODO: si tienes whisper-cli pre-compilado en un bucket, reemplaza este
+      # bloque por `curl -L https://... -o src-tauri/binaries/whisper-cli-<triple>`.
+      - name: Build whisper.cpp
+        if: steps.cache-whisper.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/ggerganov/whisper.cpp whisper.cpp-build
+          cd whisper.cpp-build
+          cmake -B build -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j
+
+      - name: Install whisper-cli into sidecar slot
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          EXT=""
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then EXT=".exe"; fi
+          SRC=$(find whisper.cpp-build/build -name "whisper-cli${EXT}" -o -name "main${EXT}" | head -1)
+          DEST="src-tauri/binaries/whisper-cli-${{ matrix.target }}${EXT}"
+          cp "$SRC" "$DEST"
+          chmod +x "$DEST" || true
+
+      - name: Install ffmpeg sidecar (macOS)
+        if: matrix.os_name == 'macos'
+        shell: bash
+        run: |
+          # FFmpeg estático para macOS, ambas arquitecturas comparten URL en evermeet
+          curl -L -o ffmpeg.zip "https://evermeet.cx/ffmpeg/getrelease/zip"
+          unzip ffmpeg.zip
+          mv ffmpeg src-tauri/binaries/ffmpeg-${{ matrix.target }}
+          chmod +x src-tauri/binaries/ffmpeg-${{ matrix.target }}
+
+      - name: Install ffmpeg sidecar (Linux)
+        if: matrix.os_name == 'linux'
+        shell: bash
+        run: |
+          # FFmpeg estático para Linux (johnvansickle.com)
+          curl -L -o ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+          mkdir -p ffmpeg-extract
+          tar -xf ffmpeg.tar.xz -C ffmpeg-extract --strip-components=1
+          cp ffmpeg-extract/ffmpeg src-tauri/binaries/ffmpeg-${{ matrix.target }}
+          chmod +x src-tauri/binaries/ffmpeg-${{ matrix.target }}
+
+      - name: Install ffmpeg sidecar (Windows)
+        if: matrix.os_name == 'windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip"
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-extract
+          $exe = Get-ChildItem -Path ffmpeg-extract -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
+          Copy-Item $exe.FullName "src-tauri/binaries/ffmpeg-${{ matrix.target }}.exe"
+
+      - name: Tauri build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # TODO macOS code-signing & notarization (cuando tengas los secrets):
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # TODO Windows code-signing:
+          # WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          # WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        with:
+          args: --target ${{ matrix.target }}
+          tagName: ${{ github.event.inputs.version || github.ref_name }}
+          releaseName: "Amautum Transcriptor ${{ github.event.inputs.version || github.ref_name }}"
+          releaseBody: |
+            Instaladores firmados del agente Amautum Transcriptor.
+
+            **Mac (chip Apple)** — `*-macos-arm64.dmg`
+            **Mac (chip Intel)** — `*-macos-x64.dmg`
+            **Windows 10/11** — `*-windows-x64.msi`
+            **Linux (cualquier distro)** — `*-linux-x64.AppImage`
+            **Linux (Ubuntu / Debian)** — `*-linux-x64.deb`
+
+            Para la guía de instalación paso a paso, visita
+            https://www.amautum.com/downloads/transcriptor
+          releaseDraft: true
+          prerelease: false
+
+      # Renombra los artefactos de Tauri al patrón consistente
+      # `AmautumTranscriptor-<version>-<os>-<arch>.<format>` que consume
+      # `lib/transcriptor/agent-downloads.ts` en el frontend de Amautum.
+      - name: Normalize asset names
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"   # strip leading v
+          BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
+          DEST="release-assets"
+          mkdir -p "$DEST"
+
+          shopt -s nullglob globstar
+
+          # macOS DMG
+          for f in "$BUNDLE_DIR"/dmg/*.dmg; do
+            cp "$f" "$DEST/AmautumTranscriptor-$VERSION-${{ matrix.os_name }}-${{ matrix.arch_name }}.dmg"
+          done
+
+          # Windows MSI
+          for f in "$BUNDLE_DIR"/msi/*.msi; do
+            cp "$f" "$DEST/AmautumTranscriptor-$VERSION-windows-${{ matrix.arch_name }}.msi"
+          done
+
+          # Linux AppImage
+          for f in "$BUNDLE_DIR"/appimage/*.AppImage; do
+            cp "$f" "$DEST/AmautumTranscriptor-$VERSION-linux-${{ matrix.arch_name }}.AppImage"
+          done
+
+          # Linux .deb
+          for f in "$BUNDLE_DIR"/deb/*.deb; do
+            cp "$f" "$DEST/AmautumTranscriptor-$VERSION-linux-${{ matrix.arch_name }}.deb"
+          done
+
+          ls -la "$DEST"
+
+      - name: Upload normalized assets to release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          for f in release-assets/*; do
+            gh release upload "$VERSION" "$f" --clobber
+          done

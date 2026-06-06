@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Amautum Transcriptor — Agente</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="status">
+      <header>
+        <h1>Amautum Transcriptor</h1>
+        <p class="subtitle">Agente local de transcripción</p>
+      </header>
+
+      <section class="card">
+        <div class="row">
+          <span class="label">Estado</span>
+          <span id="state" class="value">Iniciando…</span>
+        </div>
+        <div class="row">
+          <span class="label">Puerto local</span>
+          <span id="port" class="value mono">—</span>
+        </div>
+        <div class="row">
+          <span class="label">Trabajos en curso</span>
+          <span id="jobs" class="value">0</span>
+        </div>
+        <div class="row">
+          <span class="label">Versión</span>
+          <span id="version" class="value mono">—</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Cómo conectar Amautum</h2>
+        <ol>
+          <li>Mantén este agente abierto mientras transcribes.</li>
+          <li>Abre <a href="https://www.amautum.com" target="_blank" rel="noreferrer">amautum.com</a>, ve a Transcriptor y elige el audio.</li>
+          <li>El audio nunca sale de este equipo: solo el texto se sube cuando termina.</li>
+        </ol>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

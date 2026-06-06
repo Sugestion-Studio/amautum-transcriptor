@@ -1,0 +1,28 @@
+# Frontend
+node_modules/
+dist/
+.vite/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+src-tauri/.cargo/
+
+# Sidecar binaries — los descarga el CI o el dev local (ver src-tauri/binaries/README.md)
+src-tauri/binaries/whisper-cli*
+src-tauri/binaries/ffmpeg*
+src-tauri/binaries/*.bin
+src-tauri/binaries/*.exe
+src-tauri/binaries/models/
+
+# Logs / temp / SO
+*.log
+.DS_Store
+Thumbs.db
+*.wav
+*.tmp/
+
+# Editor
+.vscode/
+.idea/
+*.swp
