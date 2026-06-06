@@ -185,7 +185,10 @@ jobs:
           DEST="release-assets"
           mkdir -p "$DEST"
 
-          shopt -s nullglob globstar
+          # `globstar` requeriría Bash 4+ y los runners macOS de GitHub corren
+          # Bash 3.2 (limitación de la GPL). Solo `nullglob`, suficiente porque
+          # no usamos `**` recursivo en este script.
+          shopt -s nullglob
 
           # macOS DMG
           for f in "$BUNDLE_DIR"/dmg/*.dmg; do
