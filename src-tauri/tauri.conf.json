@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
   "productName": "Amautum Transcriptor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.amautum.transcriptor.agent",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -52,7 +52,8 @@
       "binaries/ffmpeg"
     ],
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
     }
   },
   "plugins": {

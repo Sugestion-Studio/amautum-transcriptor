@@ -1,18 +1,11 @@
 # Iconos del agente
 
-Coloca aquí los iconos referenciados en `tauri.conf.json`:
-
-- `tray.png` (32×32, template-friendly: blanco con alpha para macOS)
-- `32x32.png`
-- `128x128.png`
-- `128x128@2x.png` (256×256)
-- `icon.icns` (macOS bundle)
-- `icon.ico` (Windows installer)
-
-Se pueden generar con:
+Iconos generados a partir de `icon-source.png` (en la raíz del repo) con:
 
 ```bash
-npx @tauri-apps/cli icon path/to/source-1024.png
+npx @tauri-apps/cli icon icon-source.png --output src-tauri/icons
+cp src-tauri/icons/32x32.png src-tauri/icons/tray.png
 ```
 
-El comando crea todas las variantes a partir de un PNG cuadrado de 1024×1024.
+Para reemplazarlos por arte nuevo: pega un PNG cuadrado de 1024×1024 como
+`icon-source.png` y vuelve a correr esos dos comandos.
