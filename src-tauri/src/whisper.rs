@@ -181,7 +181,10 @@ fn parse_progress_line(line: &str) -> Option<ProgressTick> {
     if pct_str.is_empty() {
         return None;
     }
-    let percent: u8 = pct_str.parse().ok()?.min(100);
+    // Turbofish explícito porque Rust 2024 endurece la inferencia y la cadena
+    // `.parse().ok()?.min(100)` no le da pistas suficientes al compilador para
+    // resolver el tipo intermedio del Result.
+    let percent: u8 = pct_str.parse::<u8>().ok()?.min(100);
     Some(ProgressTick {
         percent,
         last_offset_seconds: None,
