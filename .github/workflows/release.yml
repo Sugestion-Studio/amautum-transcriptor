@@ -86,7 +86,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: whisper.cpp-build
-          key: whisper-${{ matrix.target }}-v1
+          # v2: pickea main.exe (estáticamente enlazado) en vez de whisper-cli.exe
+          # (wrapper de 28 KB) en Windows. La cache v1 no contenía nada raro,
+          # pero bumpeamos para forzar un build fresco y descartar cualquier
+          # artefacto cacheado problemático.
+          key: whisper-${{ matrix.target }}-v2
 
       # TODO: si tienes whisper-cli pre-compilado en un bucket, reemplaza este
       # bloque por `curl -L https://... -o src-tauri/binaries/whisper-cli-<triple>`.
@@ -102,13 +106,44 @@ jobs:
       - name: Install whisper-cli into sidecar slot
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p src-tauri/binaries
           EXT=""
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then EXT=".exe"; fi
-          SRC=$(find whisper.cpp-build/build -name "whisper-cli${EXT}" -o -name "main${EXT}" | head -1)
+          # En Windows, MSVC produce whisper-cli.exe como wrapper dinámico
+          # (~28 KB) que sin las DLLs adyacentes no corre. main.exe es la
+          # versión histórica y la que viene estáticamente enlazada.
+          # Buscamos por orden de preferencia y validamos tamaño mínimo.
+          SIZE_THRESHOLD=500000  # 500 KB: cualquier binario útil pasa esto.
+          SRC=""
+          for candidate in \
+              "whisper.cpp-build/build/bin/Release/main${EXT}" \
+              "whisper.cpp-build/build/bin/main${EXT}" \
+              "whisper.cpp-build/build/bin/Release/whisper-cli${EXT}" \
+              "whisper.cpp-build/build/bin/whisper-cli${EXT}" \
+              "whisper.cpp-build/build/main${EXT}" \
+              "whisper.cpp-build/build/whisper-cli${EXT}"; do
+            if [[ -f "$candidate" ]]; then
+              size=$(stat -c%s "$candidate" 2>/dev/null || stat -f%z "$candidate")
+              if [[ "$size" -gt "$SIZE_THRESHOLD" ]]; then
+                SRC="$candidate"
+                echo "Picking $SRC ($size bytes)"
+                break
+              else
+                echo "Skipping $candidate ($size bytes — too small)"
+              fi
+            fi
+          done
+          if [[ -z "$SRC" ]]; then
+            echo "ERROR: no viable whisper-cli/main binary found in build output:"
+            find whisper.cpp-build/build -name "*${EXT}" -type f 2>/dev/null | xargs -I {} ls -la {} 2>/dev/null | head -30
+            exit 1
+          fi
           DEST="src-tauri/binaries/whisper-cli-${{ matrix.target }}${EXT}"
           cp "$SRC" "$DEST"
           chmod +x "$DEST" || true
+          dst_size=$(stat -c%s "$DEST" 2>/dev/null || stat -f%z "$DEST")
+          echo "Copied $DEST ($dst_size bytes)"
 
       - name: Install ffmpeg sidecar (macOS)
         if: matrix.os_name == 'macos'
