@@ -2,8 +2,9 @@
 
 > Aplicación de escritorio que transcribe audiencias y declaraciones en la **propia máquina del estudio jurídico**. El audio nunca sale del equipo del cliente; solo el texto sincronizado se sube a Amautum cuando termina.
 
-[![Latest release](https://img.shields.io/github/v/release/Sugestion-Studio/amautum-transcriptor?label=descarga)](https://github.com/Sugestion-Studio/amautum-transcriptor/releases/latest)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Última versión](https://img.shields.io/github/v/release/Sugestion-Studio/amautum-transcriptor?label=descarga&color=brightgreen)](https://github.com/Sugestion-Studio/amautum-transcriptor/releases/latest)
+[![Estado de los builds](https://img.shields.io/github/actions/workflow/status/Sugestion-Studio/amautum-transcriptor/release.yml?label=build)](https://github.com/Sugestion-Studio/amautum-transcriptor/actions/workflows/release.yml)
+[![Licencia MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](./LICENSE)
 
 ## ¿Qué es esto?
 
