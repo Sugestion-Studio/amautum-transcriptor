@@ -11,6 +11,7 @@ use tauri::{
 mod amautum;
 mod config;
 mod ffmpeg;
+mod models;
 mod pipeline;
 mod server;
 mod types;
@@ -100,6 +101,32 @@ pub fn run() {
                 if let Err(err) = server::run(app_handle, state_for_server).await {
                     tracing::error!(?err, "El servidor HTTP del agente terminó con error");
                 }
+            });
+
+            // Health check de los sidecars al arrancar. Si están bien, marcamos
+            // `dependencies_ok = true` y la web verá "Agente listo". Si no, la
+            // web verá "Agente con problemas" y puede llamar a /diagnostics
+            // para mostrar el detalle al operador.
+            let app_for_probe = app.handle().clone();
+            let deps_flag = state.dependencies_ok.clone();
+            tauri::async_runtime::spawn(async move {
+                let ffmpeg = models::probe_sidecar(&app_for_probe, config::FFMPEG_SIDECAR).await;
+                let whisper = models::probe_sidecar(&app_for_probe, config::WHISPER_SIDECAR).await;
+                let ok = ffmpeg.is_ok() && whisper.is_ok();
+                if !ok {
+                    tracing::warn!(
+                        ffmpeg = ?ffmpeg,
+                        whisper_cli = ?whisper,
+                        "Sidecars no responden al --version inicial"
+                    );
+                } else {
+                    tracing::info!(
+                        ffmpeg = ?ffmpeg.as_ref().ok(),
+                        whisper_cli = ?whisper.as_ref().ok(),
+                        "Sidecars verificados"
+                    );
+                }
+                deps_flag.store(ok, std::sync::atomic::Ordering::SeqCst);
             });
 
             Ok(())

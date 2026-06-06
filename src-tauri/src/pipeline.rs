@@ -11,13 +11,14 @@
 //! limbo: o termina en `completado` o en `fallado`.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tokio::sync::Mutex;
 
 use crate::ffmpeg;
+use crate::models;
 use crate::types::{
     AgentEvent, AgentTriggerPayload, FailStage, FailUpload, Hardware, ProgressUpload, Segment,
     TranscriptUpload,
@@ -30,6 +31,11 @@ use crate::{amautum, config};
 pub struct AppState {
     pub ws_hub: WsHub,
     pub running: Arc<AtomicUsize>,
+    /// `true` cuando los sidecars (ffmpeg + whisper-cli) respondieron correctamente
+    /// al `--version` durante el arranque. Si es `false`, /health devuelve
+    /// `ok: false` para que la web alerte sin esperar a que el operador
+    /// intente transcribir y choque con el error.
+    pub dependencies_ok: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -37,6 +43,7 @@ impl AppState {
         Self {
             ws_hub: WsHub::new(),
             running: Arc::new(AtomicUsize::new(0)),
+            dependencies_ok: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -63,6 +70,8 @@ pub enum PipelineError {
     Ffmpeg(#[from] ffmpeg::FfmpegError),
     #[error("whisper: {0}")]
     Whisper(#[from] whisper::WhisperError),
+    #[error("modelo: {0}")]
+    Model(#[from] models::ModelError),
     #[error("amautum: {0}")]
     Amautum(#[from] amautum::AmautumError),
     #[error("io: {0}")]
@@ -73,6 +82,7 @@ impl PipelineError {
     fn stage(&self) -> FailStage {
         match self {
             PipelineError::Ffmpeg(_) => FailStage::Ffmpeg,
+            PipelineError::Model(_) => FailStage::ModelLoad,
             PipelineError::Whisper(whisper::WhisperError::ModelMissing(_)) => FailStage::ModelLoad,
             PipelineError::Whisper(_) => FailStage::Inference,
             PipelineError::Amautum(_) => FailStage::Upload,
@@ -156,8 +166,23 @@ async fn run_inner(
     )
     .await;
 
-    // ── 2) Inferencia ──────────────────────────────────────────────────────
-    let models_dir = models_dir(app);
+    // ── 2) Asegurar modelo en disco ────────────────────────────────────────
+    // Si es la primera vez con este modelo, lo bajamos de HuggingFace con
+    // progreso visible. Siguientes corridas del mismo modelo lo reutilizan.
+    let ws_hub_arc = Arc::new(state.ws_hub.clone());
+    let model_path = models::ensure_model(
+        app,
+        payload.model,
+        &payload.job_id,
+        ws_hub_arc.clone(),
+    )
+    .await?;
+    let models_dir = model_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    // ── 3) Inferencia ──────────────────────────────────────────────────────
     let job_id_for_progress = payload.job_id.clone();
     let ws_hub_for_progress = state.ws_hub.clone();
     let callback_progress = payload.callbacks.progress.clone();
@@ -304,14 +329,3 @@ fn hardware_str(h: Hardware) -> &'static str {
     }
 }
 
-/// Directorio donde el bundler colocó los modelos GGML (definido como
-/// `resources` en `tauri.conf.json`). En dev cae a `./binaries/models`.
-fn models_dir(app: &AppHandle) -> PathBuf {
-    if let Ok(resources) = app.path().resource_dir() {
-        let candidate = resources.join("binaries").join("models");
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    PathBuf::from("binaries/models")
-}

@@ -105,6 +105,16 @@ pub enum AgentEvent {
     Queued {
         job_id: String,
     },
+    /// El modelo Whisper que pidió el usuario no está en disco; lo estamos
+    /// bajando de HuggingFace. La primera vez por modelo; siguientes corridas
+    /// del mismo modelo lo reutilizan.
+    ModelDownload {
+        job_id: String,
+        model: String,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+        percent: u8,
+    },
     Preprocess {
         job_id: String,
         stage: String,

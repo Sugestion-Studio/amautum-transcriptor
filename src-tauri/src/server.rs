@@ -30,6 +30,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tower_http::cors::CorsLayer;
 
 use crate::config;
+use crate::models;
 use crate::pipeline::{self, AppState};
 use crate::types::AgentTriggerPayload;
 
@@ -54,6 +55,7 @@ pub async fn run(app: AppHandle, state: AppState) -> anyhow::Result<()> {
 
     let router = Router::new()
         .route("/health", get(health))
+        .route("/diagnostics", get(diagnostics))
         .route("/files/pick", post(files_pick))
         .route("/jobs/start", post(jobs_start))
         .route("/ws", get(ws_handler))
@@ -69,11 +71,47 @@ pub async fn run(app: AppHandle, state: AppState) -> anyhow::Result<()> {
 
 async fn health(State(ctx): State<ServerCtx>) -> Json<serde_json::Value> {
     let jobs = ctx.state.running.load(Ordering::SeqCst);
+    let dependencies_ok = ctx.state.dependencies_ok.load(Ordering::SeqCst);
     Json(json!({
-        "ok": true,
+        "ok": dependencies_ok,
         "version": config::version(),
         "busy": jobs > 0,
         "jobsRunning": jobs,
+        "dependenciesOk": dependencies_ok,
+    }))
+}
+
+/// Diagnóstico detallado del estado del agente: si los binarios sidecar están
+/// disponibles, qué modelos están descargados, y dónde viven los archivos.
+/// Lo usamos para depurar problemas de bundling/permisos sin pedirle al
+/// usuario que abra una terminal.
+async fn diagnostics(State(ctx): State<ServerCtx>) -> Json<serde_json::Value> {
+    let ffmpeg = models::probe_sidecar(&ctx.app, config::FFMPEG_SIDECAR).await;
+    let whisper = models::probe_sidecar(&ctx.app, config::WHISPER_SIDECAR).await;
+    let models_dir = models::models_dir(&ctx.app).await;
+    let model_present = match &models_dir {
+        Ok(dir) => models::first_available_model(dir).await,
+        Err(_) => None,
+    };
+    Json(json!({
+        "version": config::version(),
+        "sidecars": {
+            "ffmpeg": match ffmpeg {
+                Ok(out) => json!({ "ok": true, "version": out }),
+                Err(e) => json!({ "ok": false, "error": e }),
+            },
+            "whisperCli": match whisper {
+                Ok(out) => json!({ "ok": true, "version": out }),
+                Err(e) => json!({ "ok": false, "error": e }),
+            },
+        },
+        "models": {
+            "directory": match &models_dir {
+                Ok(d) => d.to_string_lossy().to_string(),
+                Err(e) => format!("(no resoluble: {e})"),
+            },
+            "downloaded": model_present,
+        },
     }))
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "amautum-transcriptor-agent"
-version = "0.1.2"
+version = "0.1.3"
 description = "Agente local de transcripción de audiencias con Whisper.cpp para Amautum"
 authors = ["Amautum"]
 edition = "2021"
@@ -26,7 +26,7 @@ tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
 
 # Cliente HTTP para subir el resultado a Amautum cloud
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
 # Serialización
 serde = { version = "1", features = ["derive"] }

@@ -114,9 +114,15 @@ jobs:
         if: matrix.os_name == 'macos'
         shell: bash
         run: |
-          # FFmpeg estático para macOS, ambas arquitecturas comparten URL en evermeet
-          curl -L -o ffmpeg.zip "https://evermeet.cx/ffmpeg/getrelease/zip"
-          unzip ffmpeg.zip
+          set -euo pipefail
+          curl -L --fail --show-error -o ffmpeg.zip "https://evermeet.cx/ffmpeg/getrelease/zip"
+          # Falla temprano si la descarga vino vacía (típico cuando un CDN cae)
+          if [[ $(stat -f%z ffmpeg.zip 2>/dev/null || stat -c%s ffmpeg.zip) -lt 5000000 ]]; then
+            echo "ERROR: ffmpeg.zip parece truncado:"
+            ls -la ffmpeg.zip
+            exit 1
+          fi
+          unzip -o ffmpeg.zip
           mv ffmpeg src-tauri/binaries/ffmpeg-${{ matrix.target }}
           chmod +x src-tauri/binaries/ffmpeg-${{ matrix.target }}
 
@@ -124,8 +130,13 @@ jobs:
         if: matrix.os_name == 'linux'
         shell: bash
         run: |
-          # FFmpeg estático para Linux (johnvansickle.com)
-          curl -L -o ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+          set -euo pipefail
+          curl -L --fail --show-error -o ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+          if [[ $(stat -c%s ffmpeg.tar.xz) -lt 5000000 ]]; then
+            echo "ERROR: ffmpeg.tar.xz parece truncado:"
+            ls -la ffmpeg.tar.xz
+            exit 1
+          fi
           mkdir -p ffmpeg-extract
           tar -xf ffmpeg.tar.xz -C ffmpeg-extract --strip-components=1
           cp ffmpeg-extract/ffmpeg src-tauri/binaries/ffmpeg-${{ matrix.target }}
@@ -135,11 +146,63 @@ jobs:
         if: matrix.os_name == 'windows'
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip"
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-extract
+          # `Invoke-WebRequest` no aborta en error por defecto: si gyan.dev redirige
+          # raro o devuelve 4xx el script seguía y dejaba el zip vacío sin que el
+          # CI lo notara. Forzamos error explícito y validamos tamaño.
+          $ErrorActionPreference = "Stop"
+          # Usamos curl.exe (Windows 10+ lo trae) en vez de Invoke-WebRequest:
+          # más rápido con HTTP/2, sigue redirects, falla con --fail.
+          curl.exe -L --fail --show-error --output ffmpeg.zip "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          if (-not (Test-Path ffmpeg.zip)) { throw "ffmpeg.zip no existe tras descarga" }
+          $zipSize = (Get-Item ffmpeg.zip).Length
+          if ($zipSize -lt 5000000) {
+            Write-Host "ffmpeg.zip pesó $zipSize bytes — descarga truncada"
+            Get-ChildItem ffmpeg.zip | Format-List
+            exit 1
+          }
+          Write-Host "Descargado ffmpeg.zip ($zipSize bytes)"
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-extract -Force
           $exe = Get-ChildItem -Path ffmpeg-extract -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $exe) { throw "ffmpeg.exe no encontrado tras descomprimir" }
+          Write-Host "ffmpeg.exe en: $($exe.FullName) ($($exe.Length) bytes)"
           New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
-          Copy-Item $exe.FullName "src-tauri/binaries/ffmpeg-${{ matrix.target }}.exe"
+          Copy-Item $exe.FullName "src-tauri/binaries/ffmpeg-${{ matrix.target }}.exe" -Force
+          $dst = (Get-Item "src-tauri/binaries/ffmpeg-${{ matrix.target }}.exe").Length
+          Write-Host "Copiado al slot sidecar ($dst bytes)"
+
+      - name: Verify sidecar binaries before bundling
+        # Aborta el build si CUALQUIER sidecar no quedó en su sitio. Sin esta
+        # red de seguridad, una descarga truncada se publicaba como release y
+        # el usuario chocaba en runtime con "ffmpeg: No such file or directory".
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXT=""
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then EXT=".exe"; fi
+          echo "Contenido de src-tauri/binaries/:"
+          ls -la src-tauri/binaries/ || true
+          missing=0
+          for name in whisper-cli ffmpeg; do
+            f="src-tauri/binaries/${name}-${{ matrix.target }}${EXT}"
+            if [[ ! -f "$f" ]]; then
+              echo "✗ FALTA: $f"
+              missing=$((missing+1))
+              continue
+            fi
+            size=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+            if [[ "$size" -lt 100000 ]]; then
+              echo "✗ TRUNCADO: $f ($size bytes — sospechosamente pequeño)"
+              missing=$((missing+1))
+              continue
+            fi
+            echo "✓ OK $f ($size bytes)"
+          done
+          if [[ "$missing" -gt 0 ]]; then
+            echo ""
+            echo "ABORTANDO: $missing sidecar(s) faltante(s) o truncado(s)."
+            echo "El release NO va a salir hasta que esto se arregle."
+            exit 1
+          fi
 
       - name: Tauri build
         uses: tauri-apps/tauri-action@v0

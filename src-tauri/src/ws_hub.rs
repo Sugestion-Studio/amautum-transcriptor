@@ -90,6 +90,7 @@ impl WsHub {
 fn job_id_of(event: &AgentEvent) -> &str {
     match event {
         AgentEvent::Queued { job_id }
+        | AgentEvent::ModelDownload { job_id, .. }
         | AgentEvent::Preprocess { job_id, .. }
         | AgentEvent::Started { job_id, .. }
         | AgentEvent::Progress { job_id, .. }
