@@ -1,6 +1,6 @@
 [package]
 name = "amautum-transcriptor-agent"
-version = "0.1.4"
+version = "0.1.5"
 description = "Agente local de transcripción de audiencias con Whisper.cpp para Amautum"
 authors = ["Amautum"]
 edition = "2021"

@@ -93,7 +93,7 @@ jobs:
           key: whisper-${{ matrix.target }}-v2
 
       # TODO: si tienes whisper-cli pre-compilado en un bucket, reemplaza este
-      # bloque por `curl -L https://... -o src-tauri/binaries/whisper-cli-<triple>`.
+      # bloque por `curl -L https://... -o src-tauri/whisper-cli-<triple>`.
       - name: Build whisper.cpp
         if: steps.cache-whisper.outputs.cache-hit != 'true'
         shell: bash
@@ -107,7 +107,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p src-tauri/binaries
+          mkdir -p src-tauri
           EXT=""
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then EXT=".exe"; fi
           # En Windows, MSVC produce whisper-cli.exe como wrapper dinámico
@@ -139,7 +139,7 @@ jobs:
             find whisper.cpp-build/build -name "*${EXT}" -type f 2>/dev/null | xargs -I {} ls -la {} 2>/dev/null | head -30
             exit 1
           fi
-          DEST="src-tauri/binaries/whisper-cli-${{ matrix.target }}${EXT}"
+          DEST="src-tauri/whisper-cli-${{ matrix.target }}${EXT}"
           cp "$SRC" "$DEST"
           chmod +x "$DEST" || true
           dst_size=$(stat -c%s "$DEST" 2>/dev/null || stat -f%z "$DEST")
@@ -158,8 +158,8 @@ jobs:
             exit 1
           fi
           unzip -o ffmpeg.zip
-          mv ffmpeg src-tauri/binaries/ffmpeg-${{ matrix.target }}
-          chmod +x src-tauri/binaries/ffmpeg-${{ matrix.target }}
+          mv ffmpeg src-tauri/ffmpeg-${{ matrix.target }}
+          chmod +x src-tauri/ffmpeg-${{ matrix.target }}
 
       - name: Install ffmpeg sidecar (Linux)
         if: matrix.os_name == 'linux'
@@ -174,8 +174,8 @@ jobs:
           fi
           mkdir -p ffmpeg-extract
           tar -xf ffmpeg.tar.xz -C ffmpeg-extract --strip-components=1
-          cp ffmpeg-extract/ffmpeg src-tauri/binaries/ffmpeg-${{ matrix.target }}
-          chmod +x src-tauri/binaries/ffmpeg-${{ matrix.target }}
+          cp ffmpeg-extract/ffmpeg src-tauri/ffmpeg-${{ matrix.target }}
+          chmod +x src-tauri/ffmpeg-${{ matrix.target }}
 
       - name: Install ffmpeg sidecar (Windows)
         if: matrix.os_name == 'windows'
@@ -200,9 +200,9 @@ jobs:
           $exe = Get-ChildItem -Path ffmpeg-extract -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           if (-not $exe) { throw "ffmpeg.exe no encontrado tras descomprimir" }
           Write-Host "ffmpeg.exe en: $($exe.FullName) ($($exe.Length) bytes)"
-          New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
-          Copy-Item $exe.FullName "src-tauri/binaries/ffmpeg-${{ matrix.target }}.exe" -Force
-          $dst = (Get-Item "src-tauri/binaries/ffmpeg-${{ matrix.target }}.exe").Length
+          New-Item -ItemType Directory -Force -Path src-tauri | Out-Null
+          Copy-Item $exe.FullName "src-tauri/ffmpeg-${{ matrix.target }}.exe" -Force
+          $dst = (Get-Item "src-tauri/ffmpeg-${{ matrix.target }}.exe").Length
           Write-Host "Copiado al slot sidecar ($dst bytes)"
 
       - name: Verify sidecar binaries before bundling
@@ -214,11 +214,11 @@ jobs:
           set -euo pipefail
           EXT=""
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then EXT=".exe"; fi
-          echo "Contenido de src-tauri/binaries/:"
-          ls -la src-tauri/binaries/ || true
+          echo "Contenido de src-tauri/:"
+          ls -la src-tauri/ || true
           missing=0
           for name in whisper-cli ffmpeg; do
-            f="src-tauri/binaries/${name}-${{ matrix.target }}${EXT}"
+            f="src-tauri/${name}-${{ matrix.target }}${EXT}"
             if [[ ! -f "$f" ]]; then
               echo "✗ FALTA: $f"
               missing=$((missing+1))

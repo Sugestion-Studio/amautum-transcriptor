@@ -32,5 +32,9 @@ pub const WHISPER_SAMPLE_RATE: u32 = 16_000;
 pub const WHISPER_CHANNELS: u32 = 1;
 
 /// Nombres de los sidecar binaries declarados en `tauri.conf.json`.
-pub const WHISPER_SIDECAR: &str = "binaries/whisper-cli";
-pub const FFMPEG_SIDECAR: &str = "binaries/ffmpeg";
+/// Sin subfolder: Tauri 2.0 resuelve correctamente nombres planos en runtime;
+/// con `binaries/<name>` el `shell.sidecar()` devuelve "No such file or
+/// directory" en macOS (y probablemente Windows). Para devops: los archivos
+/// en disco siguen viviendo en `src-tauri/<name>-<triple>[.exe]`.
+pub const WHISPER_SIDECAR: &str = "whisper-cli";
+pub const FFMPEG_SIDECAR: &str = "ffmpeg";

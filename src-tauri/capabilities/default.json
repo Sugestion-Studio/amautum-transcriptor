@@ -9,12 +9,12 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "name": "binaries/whisper-cli",
+          "name": "whisper-cli",
           "sidecar": true,
           "args": true
         },
         {
-          "name": "binaries/ffmpeg",
+          "name": "ffmpeg",
           "sidecar": true,
           "args": true
         }
