@@ -105,6 +105,66 @@ pub async fn convert_to_whisper_wav(
     })
 }
 
+/// Extrae un trozo del WAV ya pre-procesado entre `start_seconds` y
+/// `start_seconds + duration_seconds`. Lo usa el pipeline cuando el audio es
+/// largo y lo dividimos en chunks para no agotar la RAM de Whisper.
+///
+/// El output queda en `output_path`. Usa `-c copy` para no re-codificar y
+/// que el split sea instantáneo aunque el WAV pese cientos de MB.
+pub async fn extract_chunk(
+    app: &AppHandle,
+    source_wav: &Path,
+    start_seconds: f64,
+    duration_seconds: f64,
+    output_path: &Path,
+) -> Result<(), FfmpegError> {
+    if !source_wav.exists() {
+        return Err(FfmpegError::NotFound(source_wav.to_path_buf()));
+    }
+    if output_path.exists() {
+        let _ = fs::remove_file(output_path).await;
+    }
+
+    let shell = app.shell();
+    let cmd = shell
+        .sidecar(FFMPEG_SIDECAR)
+        .map_err(|e| FfmpegError::Tauri(e.to_string()))?
+        .args([
+            "-y",
+            "-ss",
+            &format!("{:.3}", start_seconds),
+            "-i",
+            source_wav.to_string_lossy().as_ref(),
+            "-t",
+            &format!("{:.3}", duration_seconds),
+            "-c",
+            "copy",
+            output_path.to_string_lossy().as_ref(),
+        ]);
+
+    let (mut rx, _child) = cmd
+        .spawn()
+        .map_err(|e| FfmpegError::Tauri(e.to_string()))?;
+
+    let mut stderr_buf = String::new();
+    let mut exit_code: Option<i32> = None;
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stderr(line) => {
+                stderr_buf.push_str(&String::from_utf8_lossy(&line));
+                stderr_buf.push('\n');
+            }
+            CommandEvent::Terminated(payload) => exit_code = payload.code,
+            CommandEvent::Error(err) => return Err(FfmpegError::Process(err)),
+            _ => {}
+        }
+    }
+    if exit_code != Some(0) {
+        return Err(FfmpegError::Process(extract_ffmpeg_error(&stderr_buf)));
+    }
+    Ok(())
+}
+
 /// FFmpeg emite líneas tipo `Duration: 00:42:13.50, start: …`. La parseamos
 /// si está. Si el archivo es streaming sin metadata, devolvemos None y el
 /// pipeline calcula la duración luego desde whisper.cpp.

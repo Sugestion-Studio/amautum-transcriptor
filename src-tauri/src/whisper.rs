@@ -257,3 +257,122 @@ fn parse_timestamp(s: &str) -> Option<f64> {
     let sec: f64 = parts.next()?.parse().ok()?;
     Some(h * 3600.0 + m * 60.0 + sec)
 }
+
+// ── Transcripción chunked para audios largos ────────────────────────────────
+//
+// Para audios > CHUNKING_THRESHOLD_SECONDS (10 min) dividimos el WAV en
+// trozos de CHUNK_LENGTH_SECONDS (5 min) con CHUNK_OVERLAP_SECONDS de overlap
+// y los procesamos secuencialmente. El consumo de RAM queda acotado al de un
+// chunk: en vez de cargar 1 h en memoria + el modelo `medium` (~6 GB peak),
+// procesamos cinco minutos y liberamos antes del siguiente.
+//
+// Trade-offs:
+//   - El modelo se carga UNA vez por chunk (~3-5 s con caché en disco).
+//   - Hay un riesgo pequeño de cortar una frase en la frontera; el overlap
+//     ayuda a que la siguiente corrida capture el contexto.
+//   - Los `start`/`end` de los segmentos se desplazan al timeline global.
+
+const CHUNKING_THRESHOLD_SECONDS: f64 = 10.0 * 60.0;
+const CHUNK_LENGTH_SECONDS: f64 = 5.0 * 60.0;
+const CHUNK_OVERLAP_SECONDS: f64 = 5.0;
+
+pub async fn transcribe_chunked(
+    app: &AppHandle,
+    wav_path: &Path,
+    model: WhisperModel,
+    language: &str,
+    models_dir: &Path,
+    duration_seconds: f64,
+    on_progress: Arc<Mutex<ProgressCallback>>,
+) -> Result<WhisperRun, WhisperError> {
+    // Audios cortos: usamos la ruta clásica directo. Sin overhead extra.
+    if duration_seconds <= CHUNKING_THRESHOLD_SECONDS {
+        return transcribe(app, wav_path, model, language, models_dir, on_progress).await;
+    }
+
+    let chunk_count = ((duration_seconds / CHUNK_LENGTH_SECONDS).ceil() as usize).max(1);
+    tracing::info!(
+        duration_seconds,
+        chunk_count,
+        chunk_length = CHUNK_LENGTH_SECONDS,
+        "Procesando audio largo en chunks"
+    );
+
+    let parent = wav_path
+        .parent()
+        .ok_or_else(|| WhisperError::Io(std::io::Error::new(std::io::ErrorKind::Other, "wav sin parent")))?
+        .to_path_buf();
+
+    let mut all_segments: Vec<Segment> = Vec::new();
+    let mut combined_text = String::new();
+    let mut detected_language: Option<String> = None;
+    let mut model_used: Option<String> = None;
+
+    for i in 0..chunk_count {
+        let chunk_start = (i as f64) * CHUNK_LENGTH_SECONDS;
+        let chunk_end_target = chunk_start + CHUNK_LENGTH_SECONDS + CHUNK_OVERLAP_SECONDS;
+        let chunk_end = chunk_end_target.min(duration_seconds);
+        let chunk_duration = chunk_end - chunk_start;
+        if chunk_duration < 0.1 {
+            continue;
+        }
+
+        let chunk_path = parent.join(format!("chunk_{:03}.wav", i));
+        crate::ffmpeg::extract_chunk(app, wav_path, chunk_start, chunk_duration, &chunk_path)
+            .await
+            .map_err(|e| WhisperError::Process(format!("ffmpeg chunking: {e}")))?;
+
+        // El progreso de Whisper para este chunk va de 0-100. Lo mapeamos a
+        // la fracción del job total que corresponde a este chunk.
+        let chunk_index = i;
+        let inner_cb_storage = on_progress.clone();
+        let inner_cb: ProgressCallback = Box::new(move |tick: ProgressTick| {
+            let chunk_pct = tick.percent as f64;
+            let global_pct =
+                ((chunk_index as f64 * 100.0) + chunk_pct) / (chunk_count as f64);
+            let global_tick = ProgressTick {
+                percent: global_pct.min(100.0).max(0.0) as u8,
+                last_offset_seconds: None,
+            };
+            // Re-emit usando el callback original. Usamos try_lock para no
+            // bloquear si está siendo invocado en cadena.
+            if let Ok(mut outer) = inner_cb_storage.try_lock() {
+                (outer)(global_tick);
+            }
+        });
+        let inner_arc: Arc<Mutex<ProgressCallback>> = Arc::new(Mutex::new(inner_cb));
+
+        let run = transcribe(app, &chunk_path, model, language, models_dir, inner_arc).await?;
+
+        // Desplaza timestamps al timeline global. El overlap puede duplicar
+        // segmentos al final del chunk anterior, pero whisper.cpp suele
+        // entregar segmentos coherentes — preferimos un poco de duplicación
+        // antes que perder texto en el corte.
+        for mut seg in run.segments {
+            seg.start += chunk_start;
+            seg.end += chunk_start;
+            all_segments.push(seg);
+        }
+        if !combined_text.is_empty() && !combined_text.ends_with(' ') {
+            combined_text.push(' ');
+        }
+        combined_text.push_str(run.full_text.trim());
+
+        if detected_language.is_none() {
+            detected_language = Some(run.language);
+        }
+        if model_used.is_none() {
+            model_used = Some(run.model_used);
+        }
+
+        // Limpia el WAV intermedio para no llenar el disco temporal.
+        let _ = fs::remove_file(&chunk_path).await;
+    }
+
+    Ok(WhisperRun {
+        language: detected_language.unwrap_or_else(|| language.to_string()),
+        model_used: model_used.unwrap_or_else(|| model.as_str().to_string()),
+        segments: all_segments,
+        full_text: combined_text,
+    })
+}

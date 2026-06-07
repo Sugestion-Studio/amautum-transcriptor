@@ -236,12 +236,18 @@ async fn run_inner(
             }
         })));
 
-    let run = whisper::transcribe(
+    // Para audios largos el `transcribe_chunked` divide el WAV internamente y
+    // libera RAM entre chunks. Para audios cortos cae a `transcribe` directo
+    // sin overhead. Esta es la estrategia por defecto desde v0.1.6 — evita
+    // los crasheos por OOM que afectaban a usuarios Windows con audios > 1 h
+    // incluso con modelos pequeños.
+    let run = whisper::transcribe_chunked(
         app,
         &pre.wav_path,
         payload.model,
         &payload.language,
         &models_dir,
+        duration_secs,
         on_progress,
     )
     .await?;
