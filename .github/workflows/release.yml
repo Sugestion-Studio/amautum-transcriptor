@@ -166,15 +166,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -L --fail --show-error -o ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+          # johnvansickle.com empezó a devolver 415 a clientes curl genéricos
+          # en mayo 2026. Cambiamos a BtbN/FFmpeg-Builds que vive en GitHub
+          # Releases — mucho más estable como dependencia de CI.
+          curl -L --fail --show-error \
+            -o ffmpeg.tar.xz \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
           if [[ $(stat -c%s ffmpeg.tar.xz) -lt 5000000 ]]; then
             echo "ERROR: ffmpeg.tar.xz parece truncado:"
             ls -la ffmpeg.tar.xz
             exit 1
           fi
           mkdir -p ffmpeg-extract
-          tar -xf ffmpeg.tar.xz -C ffmpeg-extract --strip-components=1
-          cp ffmpeg-extract/ffmpeg src-tauri/ffmpeg-${{ matrix.target }}
+          # BtbN trae estructura `<release>/bin/ffmpeg`; strip-components=2 nos
+          # deja el binario directo en ffmpeg-extract/ffmpeg.
+          tar -xf ffmpeg.tar.xz -C ffmpeg-extract
+          src_bin=$(find ffmpeg-extract -name "ffmpeg" -type f -executable | head -1)
+          if [[ -z "$src_bin" ]]; then
+            echo "ERROR: no encontramos el binario ffmpeg dentro del tar.xz"
+            find ffmpeg-extract -type f | head -30
+            exit 1
+          fi
+          echo "Encontrado ffmpeg en: $src_bin ($(stat -c%s "$src_bin") bytes)"
+          cp "$src_bin" src-tauri/ffmpeg-${{ matrix.target }}
           chmod +x src-tauri/ffmpeg-${{ matrix.target }}
 
       - name: Install ffmpeg sidecar (Windows)
