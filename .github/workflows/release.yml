@@ -1,112 +1,41 @@
-# Release 100% automático del agente Amautum Transcriptor.
+# Compila el agente para macOS (arm64 + x64), Windows y Linux y publica los
+# instaladores como assets de una GitHub Release.
 #
-# Disparo: cada push a `main` (que toque código). El workflow:
-#   1. [job prepare] calcula la siguiente versión (bump de patch sobre el último
-#      tag `v*`), la escribe en tauri.conf.json + Cargo.toml, commitea con
-#      `[skip ci]`, crea el tag `vX.Y.Z` y lo empuja. NO queda nada manual:
-#      ni bump de versión, ni tag, ni disparo.
-#   2. [job build] compila macOS (arm64+x64), Windows y Linux desde ese tag y
-#      publica una GitHub Release (no draft) con los instaladores.
+# DISPARO: versionamiento por TAG (el flujo probado). Para publicar:
 #
-# Disparo manual opcional (workflow_dispatch) por si quieres forzar un bump
-# minor/major — pero el flujo normal no lo necesita.
+#   1. Sube la versión en src-tauri/tauri.conf.json y src-tauri/Cargo.toml.
+#   2. git commit -am "release: vX.Y.Z"
+#   3. git tag vX.Y.Z && git push origin main --tags
+#
+#   El push del tag `v*` dispara este workflow, que compila las 4 plataformas y
+#   publica la release. El build hace checkout NATIVO del tag, así que la
+#   versión compilada siempre coincide con el tag (sin handoffs entre jobs).
+#
+# También se puede disparar a mano (workflow_dispatch) pasando la versión —
+# útil para re-generar una release sin re-taggear.
 #
 # NOTAS devops:
 #   • whisper-cli se compila in-line desde whisper.cpp (cacheado por target).
 #   • Diarización (sherpa-diarize) es OPCIONAL: ver el step correspondiente.
 #   • Code-signing macOS/Windows: pendiente (ver TODO en el step "Tauri build").
-#   • El push del bump usa GITHUB_TOKEN. Si `main` tiene branch protection que
-#     bloquea pushes directos, hay que permitir a Actions saltarse la regla, o
-#     el job `prepare` fallará al empujar.
 
 name: Release
 
 on:
   push:
-    branches: [main]
-    # Cambios solo de documentación no cortan release.
-    paths-ignore:
-      - "**.md"
-      - "src-tauri/binaries/**"
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
-      bump:
-        description: "Tipo de incremento de versión"
-        type: choice
-        options: [patch, minor, major]
-        default: patch
+      version:
+        description: "Versión a publicar (ej. v0.1.7)."
+        required: true
 
 permissions:
   contents: write
 
-# Serializa releases: dos pushes seguidos no compiten por el mismo tag.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 jobs:
-  # ── 1) Calcula versión, bumpea archivos, commitea y taggea ──────────────────
-  prepare:
-    runs-on: ubuntu-latest
-    # El commit de bump lleva `[skip ci]`; igual lo filtramos por las dudas.
-    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
-    outputs:
-      tag: ${{ steps.bump.outputs.tag }}
-      version: ${{ steps.bump.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # necesitamos todos los tags para calcular el siguiente
-
-      - name: Calcular versión, bumpear, commitear y taggear
-        id: bump
-        shell: bash
-        env:
-          # En push a main = patch automático; en dispatch respeta el input.
-          BUMP: ${{ github.event.inputs.bump || 'patch' }}
-        run: |
-          set -euo pipefail
-          git fetch --tags --force
-
-          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)
-          if [[ -z "$latest" ]]; then
-            # Primer release: arranca de la versión actual de tauri.conf.json.
-            base=$(jq -r '.version' src-tauri/tauri.conf.json)
-            latest="v${base}"
-          fi
-          ver="${latest#v}"
-          MAJOR="${ver%%.*}"; rest="${ver#*.}"; MINOR="${rest%%.*}"; PATCH="${rest##*.}"
-
-          case "$BUMP" in
-            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
-            *)     PATCH=$((PATCH+1)) ;;
-          esac
-          NEW="${MAJOR}.${MINOR}.${PATCH}"
-          TAG="v${NEW}"
-          echo "Último tag: ${latest} → nueva versión: ${TAG}"
-
-          # Escribe la versión en los dos archivos fuente de verdad.
-          jq --arg v "$NEW" '.version = $v' src-tauri/tauri.conf.json > _t.json
-          mv _t.json src-tauri/tauri.conf.json
-          # Solo la línea de versión del [package] empieza con `version = "x.y.z"`;
-          # las deps usan `name = { version = ... }`, así que no las toca.
-          sed -i -E '0,/^version = "[0-9]+\.[0-9]+\.[0-9]+"/s//version = "'"$NEW"'"/' src-tauri/Cargo.toml
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src-tauri/tauri.conf.json src-tauri/Cargo.toml
-          git commit -m "chore(release): ${TAG} [skip ci]"
-          git tag "$TAG"
-          git push origin "HEAD:${GITHUB_REF_NAME}" --follow-tags
-
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${NEW}" >> "$GITHUB_OUTPUT"
-
-  # ── 2) Compila por plataforma y publica la release ──────────────────────────
   build:
-    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -129,10 +58,8 @@ jobs:
             arch_name: x64
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Checkout (en el tag recién creado)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -305,10 +232,10 @@ jobs:
       # sin la función (el toggle de la web fallaría de forma controlada en
       # etapa `diarization`).
       #
-      # Para ACTIVAR diarización en todos los releases: pon una versión válida de
-      # k2-fsa/sherpa-onnx abajo. Usa el build ESTÁTICO del ejecutable — un build
-      # `-shared` arrastra libs (.dylib/.so/.dll) que no se empaquetan en el slot
-      # sidecar (un único archivo). Valida los nombres de asset contra la release.
+      # Para ACTIVAR diarización: pon una versión válida de k2-fsa/sherpa-onnx
+      # abajo. Usa el build ESTÁTICO del ejecutable — un build `-shared` arrastra
+      # libs (.dylib/.so/.dll) que no se empaquetan en el slot sidecar (un único
+      # archivo). Valida los nombres de asset contra la release.
       - name: Install sherpa-diarize sidecar (opcional)
         shell: bash
         env:
@@ -401,8 +328,8 @@ jobs:
           # WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           args: --target ${{ matrix.target }}
-          tagName: ${{ needs.prepare.outputs.tag }}
-          releaseName: "Amautum Transcriptor ${{ needs.prepare.outputs.tag }}"
+          tagName: ${{ github.event.inputs.version || github.ref_name }}
+          releaseName: "Amautum Transcriptor ${{ github.event.inputs.version || github.ref_name }}"
           releaseBody: |
             Instaladores del agente Amautum Transcriptor.
 
@@ -414,9 +341,7 @@ jobs:
 
             Para la guía de instalación paso a paso, visita
             https://www.amautum.com/downloads/transcriptor
-          # Auto-publicada (no draft) para que la página de descargas siempre
-          # apunte a la última versión sin intervención manual.
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
 
       # Renombra los artefactos de Tauri al patrón consistente
@@ -425,7 +350,8 @@ jobs:
       - name: Normalize asset names
         shell: bash
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"   # strip leading v
           BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
           DEST="release-assets"
           mkdir -p "$DEST"
@@ -462,6 +388,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
           for f in release-assets/*; do
-            gh release upload "${{ needs.prepare.outputs.tag }}" "$f" --clobber
+            gh release upload "$VERSION" "$f" --clobber
           done
