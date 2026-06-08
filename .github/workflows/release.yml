@@ -1,36 +1,112 @@
-# Compila el agente para macOS (arm64 + x64), Windows y Linux y publica los
-# instaladores como assets de una GitHub Release. Se dispara automáticamente al
-# empujar un tag `v*` (ej. `v0.1.0`) o manualmente desde la pestaña Actions.
+# Release 100% automático del agente Amautum Transcriptor.
 #
-# IMPORTANTE — antes del PRIMER release necesitas resolver dos cosas en este
-# workflow (marcadas como TODO):
+# Disparo: cada push a `main` (que toque código). El workflow:
+#   1. [job prepare] calcula la siguiente versión (bump de patch sobre el último
+#      tag `v*`), la escribe en tauri.conf.json + Cargo.toml, commitea con
+#      `[skip ci]`, crea el tag `vX.Y.Z` y lo empuja. NO queda nada manual:
+#      ni bump de versión, ni tag, ni disparo.
+#   2. [job build] compila macOS (arm64+x64), Windows y Linux desde ese tag y
+#      publica una GitHub Release (no draft) con los instaladores.
 #
-#   1. Cómo conseguir el binario de `whisper-cli` para cada plataforma.
-#      Hoy lo dejamos compilado in-line desde whisper.cpp (~5–10 min por SO).
-#      Si tienes binarios pre-compilados en un bucket, cámbialo a `curl -L ...`.
+# Disparo manual opcional (workflow_dispatch) por si quieres forzar un bump
+# minor/major — pero el flujo normal no lo necesita.
 #
-#   2. Code-signing y notarización. Para macOS y Windows necesitas certificados
-#      y secretos configurados en el repo (Settings → Secrets). Mientras no los
-#      tengas, el instalador funciona pero el usuario verá el aviso de "app sin
-#      verificar" al primer arranque.
+# NOTAS devops:
+#   • whisper-cli se compila in-line desde whisper.cpp (cacheado por target).
+#   • Diarización (sherpa-diarize) es OPCIONAL: ver el step correspondiente.
+#   • Code-signing macOS/Windows: pendiente (ver TODO en el step "Tauri build").
+#   • El push del bump usa GITHUB_TOKEN. Si `main` tiene branch protection que
+#     bloquea pushes directos, hay que permitir a Actions saltarse la regla, o
+#     el job `prepare` fallará al empujar.
 
 name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    # Cambios solo de documentación no cortan release.
+    paths-ignore:
+      - "**.md"
+      - "src-tauri/binaries/**"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Versión a publicar (ej. v0.1.0). Solo crea draft."
-        required: true
+      bump:
+        description: "Tipo de incremento de versión"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 permissions:
   contents: write
 
+# Serializa releases: dos pushes seguidos no compiten por el mismo tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  # ── 1) Calcula versión, bumpea archivos, commitea y taggea ──────────────────
+  prepare:
+    runs-on: ubuntu-latest
+    # El commit de bump lleva `[skip ci]`; igual lo filtramos por las dudas.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # necesitamos todos los tags para calcular el siguiente
+
+      - name: Calcular versión, bumpear, commitear y taggear
+        id: bump
+        shell: bash
+        env:
+          # En push a main = patch automático; en dispatch respeta el input.
+          BUMP: ${{ github.event.inputs.bump || 'patch' }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)
+          if [[ -z "$latest" ]]; then
+            # Primer release: arranca de la versión actual de tauri.conf.json.
+            base=$(jq -r '.version' src-tauri/tauri.conf.json)
+            latest="v${base}"
+          fi
+          ver="${latest#v}"
+          MAJOR="${ver%%.*}"; rest="${ver#*.}"; MINOR="${rest%%.*}"; PATCH="${rest##*.}"
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            *)     PATCH=$((PATCH+1)) ;;
+          esac
+          NEW="${MAJOR}.${MINOR}.${PATCH}"
+          TAG="v${NEW}"
+          echo "Último tag: ${latest} → nueva versión: ${TAG}"
+
+          # Escribe la versión en los dos archivos fuente de verdad.
+          jq --arg v "$NEW" '.version = $v' src-tauri/tauri.conf.json > _t.json
+          mv _t.json src-tauri/tauri.conf.json
+          # Solo la línea de versión del [package] empieza con `version = "x.y.z"`;
+          # las deps usan `name = { version = ... }`, así que no las toca.
+          sed -i -E '0,/^version = "[0-9]+\.[0-9]+\.[0-9]+"/s//version = "'"$NEW"'"/' src-tauri/Cargo.toml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          git commit -m "chore(release): ${TAG} [skip ci]"
+          git tag "$TAG"
+          git push origin "HEAD:${GITHUB_REF_NAME}" --follow-tags
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${NEW}" >> "$GITHUB_OUTPUT"
+
+  # ── 2) Compila por plataforma y publica la release ──────────────────────────
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -53,8 +129,10 @@ jobs:
             arch_name: x64
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Checkout
+      - name: Checkout (en el tag recién creado)
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -219,57 +297,59 @@ jobs:
           $dst = (Get-Item "src-tauri/ffmpeg-${{ matrix.target }}.exe").Length
           Write-Host "Copiado al slot sidecar ($dst bytes)"
 
-      # ── Diarización (sherpa-onnx) ───────────────────────────────────────────
-      # Binario `sherpa-onnx-offline-speaker-diarization` de k2-fsa, renombrado
-      # al slot sidecar `sherpa-diarize-<triple>`. Está declarado en
-      # `externalBin` (tauri.conf.json) y en las capabilities, así que es un
-      # sidecar OBLIGATORIO: el bundle falla si no queda en su sitio. Eso es
-      # intencional — la web ofrece el toggle "Identificar interlocutores" y no
-      # queremos publicar un release donde ese botón falle en runtime.
+      # ── Diarización (sherpa-onnx) — OPCIONAL, NUNCA bloquea el release ───────
+      # Por defecto SHERPA_ONNX_VERSION está vacío: el release sale SIN
+      # diarización. `sherpa-diarize` NO está en externalBin/capabilities del
+      # repo; este step lo INYECTA solo cuando el binario se descargó bien, así
+      # que un fallo de descarga jamás tumba el build — simplemente se publica
+      # sin la función (el toggle de la web fallaría de forma controlada en
+      # etapa `diarization`).
       #
-      # TODO devops (VALIDAR antes del próximo release — no probado en CI aún):
-      #   1. Confirmar que `SHERPA_ONNX_VERSION` apunta a un release real de
-      #      k2-fsa/sherpa-onnx y que los nombres de asset de abajo coinciden
-      #      (cambian entre versiones).
-      #   2. CRÍTICO: el slot sidecar de Tauri es UN solo archivo. Un build
-      #      `-shared` arrastra libs (.dylib/.so/.dll) que NO se empaquetan y el
-      #      binario no arranca en la máquina del usuario. Hay que usar el build
-      #      ESTÁTICO del ejecutable (mismo problema que whisper-cli en Windows).
-      #   Si necesitas publicar un hotfix ANTES de validar esto, quita
-      #   `sherpa-diarize` de externalBin + capabilities + del loop de verify y
-      #   oculta el toggle en la web; el resto del agente compila igual.
-      - name: Install sherpa-diarize sidecar
+      # Para ACTIVAR diarización en todos los releases: pon una versión válida de
+      # k2-fsa/sherpa-onnx abajo. Usa el build ESTÁTICO del ejecutable — un build
+      # `-shared` arrastra libs (.dylib/.so/.dll) que no se empaquetan en el slot
+      # sidecar (un único archivo). Valida los nombres de asset contra la release.
+      - name: Install sherpa-diarize sidecar (opcional)
         shell: bash
         env:
-          SHERPA_ONNX_VERSION: "1.10.46" # ⚠ validar contra releases reales
+          SHERPA_ONNX_VERSION: "" # ej. "1.10.46" para activar diarización
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          if [[ -z "${SHERPA_ONNX_VERSION}" ]]; then
+            echo "SHERPA_ONNX_VERSION vacío — este release sale SIN diarización."
+            exit 0
+          fi
           EXT=""
           case "${{ matrix.target }}" in
-            *darwin*)        ASSET="sherpa-onnx-v${SHERPA_ONNX_VERSION}-osx-universal2-static.tar.bz2" ;;
-            *linux*)         ASSET="sherpa-onnx-v${SHERPA_ONNX_VERSION}-linux-x64-static.tar.bz2" ;;
-            *windows*)       ASSET="sherpa-onnx-v${SHERPA_ONNX_VERSION}-win-x64-static.tar.bz2"; EXT=".exe" ;;
-            *) echo "Target no soportado: ${{ matrix.target }}"; exit 1 ;;
+            *darwin*)  ASSET="sherpa-onnx-v${SHERPA_ONNX_VERSION}-osx-universal2-static.tar.bz2" ;;
+            *linux*)   ASSET="sherpa-onnx-v${SHERPA_ONNX_VERSION}-linux-x64-static.tar.bz2" ;;
+            *windows*) ASSET="sherpa-onnx-v${SHERPA_ONNX_VERSION}-win-x64-static.tar.bz2"; EXT=".exe" ;;
+            *) echo "Target no soportado: ${{ matrix.target }} — sin diarización."; exit 0 ;;
           esac
           URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_ONNX_VERSION}/${ASSET}"
           echo "Descargando $URL"
-          curl -L --fail --show-error -o sherpa.tar.bz2 "$URL"
+          if ! curl -L --fail --show-error -o sherpa.tar.bz2 "$URL"; then
+            echo "⚠ No se pudo descargar sherpa — release SIN diarización."; exit 0
+          fi
           mkdir -p sherpa-extract
-          tar -xjf sherpa.tar.bz2 -C sherpa-extract
+          if ! tar -xjf sherpa.tar.bz2 -C sherpa-extract; then
+            echo "⚠ tar falló — release SIN diarización."; exit 0
+          fi
           BIN=$(find sherpa-extract -type f -name "sherpa-onnx-offline-speaker-diarization${EXT}" | head -1)
           if [[ -z "$BIN" ]]; then
-            echo "ERROR: no encontramos sherpa-onnx-offline-speaker-diarization en el tar:"
-            find sherpa-extract -type f | head -40
-            exit 1
+            echo "⚠ binario no encontrado en el tar — release SIN diarización."; exit 0
           fi
           cp "$BIN" "src-tauri/sherpa-diarize-${{ matrix.target }}${EXT}"
           chmod +x "src-tauri/sherpa-diarize-${{ matrix.target }}${EXT}" || true
-          echo "sherpa-diarize instalado desde $BIN"
+          # Inyecta el sidecar en la config SOLO ahora que el binario existe.
+          jq '.bundle.externalBin += ["sherpa-diarize"]' src-tauri/tauri.conf.json > _t.json && mv _t.json src-tauri/tauri.conf.json
+          jq '(.permissions[] | select(.identifier? == "shell:allow-execute").allow) += [{"name":"sherpa-diarize","sidecar":true,"args":true}]' \
+            src-tauri/capabilities/default.json > _c.json && mv _c.json src-tauri/capabilities/default.json
+          echo "sherpa-diarize instalado e inyectado en la config."
 
       - name: Verify sidecar binaries before bundling
-        # Aborta el build si CUALQUIER sidecar no quedó en su sitio. Sin esta
-        # red de seguridad, una descarga truncada se publicaba como release y
-        # el usuario chocaba en runtime con "ffmpeg: No such file or directory".
+        # Aborta el build si falta un sidecar OBLIGATORIO (whisper-cli / ffmpeg).
+        # `sherpa-diarize` es opcional: solo se informa, no bloquea.
         shell: bash
         run: |
           set -euo pipefail
@@ -278,7 +358,7 @@ jobs:
           echo "Contenido de src-tauri/:"
           ls -la src-tauri/ || true
           missing=0
-          for name in whisper-cli ffmpeg sherpa-diarize; do
+          for name in whisper-cli ffmpeg; do
             f="src-tauri/${name}-${{ matrix.target }}${EXT}"
             if [[ ! -f "$f" ]]; then
               echo "✗ FALTA: $f"
@@ -293,10 +373,15 @@ jobs:
             fi
             echo "✓ OK $f ($size bytes)"
           done
+          sf="src-tauri/sherpa-diarize-${{ matrix.target }}${EXT}"
+          if [[ -f "$sf" ]]; then
+            echo "✓ (opcional) sherpa-diarize presente — release CON diarización"
+          else
+            echo "ℹ sherpa-diarize ausente — release SIN diarización (esperado si no la activaste)"
+          fi
           if [[ "$missing" -gt 0 ]]; then
             echo ""
-            echo "ABORTANDO: $missing sidecar(s) faltante(s) o truncado(s)."
-            echo "El release NO va a salir hasta que esto se arregle."
+            echo "ABORTANDO: $missing sidecar(s) obligatorio(s) faltante(s) o truncado(s)."
             exit 1
           fi
 
@@ -316,10 +401,10 @@ jobs:
           # WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           args: --target ${{ matrix.target }}
-          tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: "Amautum Transcriptor ${{ github.event.inputs.version || github.ref_name }}"
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: "Amautum Transcriptor ${{ needs.prepare.outputs.tag }}"
           releaseBody: |
-            Instaladores firmados del agente Amautum Transcriptor.
+            Instaladores del agente Amautum Transcriptor.
 
             **Mac (chip Apple)** — `*-macos-arm64.dmg`
             **Mac (chip Intel)** — `*-macos-x64.dmg`
@@ -329,7 +414,9 @@ jobs:
 
             Para la guía de instalación paso a paso, visita
             https://www.amautum.com/downloads/transcriptor
-          releaseDraft: true
+          # Auto-publicada (no draft) para que la página de descargas siempre
+          # apunte a la última versión sin intervención manual.
+          releaseDraft: false
           prerelease: false
 
       # Renombra los artefactos de Tauri al patrón consistente
@@ -338,8 +425,7 @@ jobs:
       - name: Normalize asset names
         shell: bash
         run: |
-          VERSION="${{ github.event.inputs.version || github.ref_name }}"
-          VERSION="${VERSION#v}"   # strip leading v
+          VERSION="${{ needs.prepare.outputs.version }}"
           BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
           DEST="release-assets"
           mkdir -p "$DEST"
@@ -376,7 +462,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ github.event.inputs.version || github.ref_name }}"
           for f in release-assets/*; do
-            gh release upload "$VERSION" "$f" --clobber
+            gh release upload "${{ needs.prepare.outputs.tag }}" "$f" --clobber
           done

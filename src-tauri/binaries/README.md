@@ -62,6 +62,14 @@ arranca y transcribe perfectamente sin este binario; su ausencia NO marca
 `dependenciesOk: false`. Solo los jobs que pidan diarización fallarán (en etapa
 `diarization`) si no está.
 
+**No está en `externalBin`/`capabilities` del repo a propósito.** Así los builds
+sin diarización no lo exigen y el release nunca se bloquea por su culpa. El CI
+([`release.yml`](../../.github/workflows/release.yml)) lo **inyecta** en la
+config en tiempo de build, pero solo cuando logra descargar el binario —
+controlado por la variable `SHERPA_ONNX_VERSION` (vacía = release sin
+diarización). Si lo quieres en local para desarrollo, añade tú la entrada a
+`tauri.conf.json` (`externalBin`) y a `capabilities/default.json`.
+
 Es el ejecutable `sherpa-onnx-offline-speaker-diarization` de
 [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx/releases), renombrado
 al slot sidecar con el sufijo del target:

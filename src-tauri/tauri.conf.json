@@ -49,8 +49,7 @@
     "longDescription": "Agente que ejecuta Whisper.cpp localmente para transcribir audiencias y declaraciones. El audio nunca sale del equipo del estudio.",
     "externalBin": [
       "whisper-cli",
-      "ffmpeg",
-      "sherpa-diarize"
+      "ffmpeg"
     ],
     "macOS": {
       "minimumSystemVersion": "11.0",
