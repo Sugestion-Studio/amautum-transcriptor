@@ -145,6 +145,78 @@ fn download_url(model: WhisperModel) -> String {
     )
 }
 
+/// Asegura en disco los dos modelos ONNX que necesita el diarizador
+/// (segmentación + embedding). Devuelve sus rutas. A diferencia de los GGML de
+/// whisper —que pueden pesar GBs y justifican una barra de progreso— estos
+/// suman ~44 MB y se bajan una sola vez, así que los traemos sin emitir eventos
+/// de progreso al WS: solo dejamos rastro en los logs.
+pub async fn ensure_diarization_models(
+    app: &AppHandle,
+) -> Result<(PathBuf, PathBuf), ModelError> {
+    let dir = models_dir(app).await?;
+
+    let seg = dir.join(crate::config::DIARIZE_SEGMENTATION_MODEL);
+    ensure_downloaded(
+        &seg,
+        crate::config::DIARIZE_SEGMENTATION_URL,
+        crate::config::DIARIZE_SEGMENTATION_MIN_BYTES,
+        "segmentación",
+    )
+    .await?;
+
+    let emb = dir.join(crate::config::DIARIZE_EMBEDDING_MODEL);
+    ensure_downloaded(
+        &emb,
+        crate::config::DIARIZE_EMBEDDING_URL,
+        crate::config::DIARIZE_EMBEDDING_MIN_BYTES,
+        "embedding de voz",
+    )
+    .await?;
+
+    Ok((seg, emb))
+}
+
+/// Descarga `url` a `dest` si no existe o quedó truncado bajo `min_bytes`.
+/// Usa el mismo `.part` + rename atómico que `ensure_model` para no dejar
+/// medio-archivos si el agente muere a mitad de la descarga.
+async fn ensure_downloaded(
+    dest: &Path,
+    url: &str,
+    min_bytes: u64,
+    label: &str,
+) -> Result<(), ModelError> {
+    if let Ok(meta) = fs::metadata(dest).await {
+        if meta.len() >= min_bytes {
+            return Ok(());
+        }
+        let _ = fs::remove_file(dest).await;
+    }
+
+    let tmp = dest.with_extension("part");
+    let _ = fs::remove_file(&tmp).await;
+    tracing::info!(label, url, "Descargando modelo de diarización");
+
+    let res = CLIENT.get(url).send().await?;
+    let status = res.status();
+    if !status.is_success() {
+        return Err(ModelError::Rejected {
+            status: status.as_u16(),
+            model: format!("diarización/{label}"),
+        });
+    }
+
+    let mut stream = res.bytes_stream();
+    let mut file = fs::File::create(&tmp).await?;
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk?;
+        file.write_all(&bytes).await?;
+    }
+    file.sync_all().await?;
+    drop(file);
+    fs::rename(&tmp, dest).await?;
+    Ok(())
+}
+
 /// Tamaño mínimo (en bytes) que esperamos del modelo en disco para considerarlo
 /// no-truncado. Valores conservadores: los archivos reales son un poco más
 /// grandes, pero quedan suficiente margen para descartar descargas a medias.

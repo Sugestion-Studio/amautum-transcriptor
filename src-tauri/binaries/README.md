@@ -1,6 +1,6 @@
 # Sidecar binaries
 
-Esta carpeta NO se versiona (ver `agent/.gitignore`). El agente espera dos binarios sidecar resueltos por Tauri, más una carpeta `models/` con el modelo GGML que se quiera usar.
+Esta carpeta NO se versiona (ver `agent/.gitignore`). El agente espera tres binarios sidecar resueltos por Tauri (`whisper-cli`, `ffmpeg` y —opcional— `sherpa-diarize`), más una carpeta `models/` con el modelo GGML que se quiera usar.
 
 ## Convención de nombres (Tauri sidecar)
 
@@ -54,6 +54,32 @@ Descarga un build estático desde:
 - Windows: <https://www.gyan.dev/ffmpeg/builds/>.
 
 Copia el binario aquí con el sufijo del target.
+
+## sherpa-diarize (diarización — OPCIONAL)
+
+Solo se necesita si quieres la función "Identificar interlocutores". El agente
+arranca y transcribe perfectamente sin este binario; su ausencia NO marca
+`dependenciesOk: false`. Solo los jobs que pidan diarización fallarán (en etapa
+`diarization`) si no está.
+
+Es el ejecutable `sherpa-onnx-offline-speaker-diarization` de
+[k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx/releases), renombrado
+al slot sidecar con el sufijo del target:
+
+```
+binaries/sherpa-diarize-aarch64-apple-darwin
+binaries/sherpa-diarize-x86_64-unknown-linux-gnu
+binaries/sherpa-diarize-x86_64-pc-windows-msvc.exe
+```
+
+> ⚠️ Preferir un build **estático** del binario: el slot sidecar de Tauri es un
+> único archivo y un build dinámico (`-shared`) arrastra `.so/.dylib/.dll`
+> adyacentes que no se empaquetan. Es el mismo problema que tuvimos con
+> `whisper-cli` en Windows (ver `release.yml`).
+
+Los dos modelos ONNX que consume (segmentación pyannote + embedding de voz) NO
+van aquí: el agente los descarga al directorio de datos del usuario la primera
+vez que se pide diarización (ver `config.rs` → `DIARIZE_*`).
 
 ## Modelos GGML
 

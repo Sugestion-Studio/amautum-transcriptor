@@ -10,6 +10,7 @@ use tauri::{
 
 mod amautum;
 mod config;
+mod diarize;
 mod ffmpeg;
 mod models;
 mod pipeline;
@@ -114,6 +115,11 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let ffmpeg = models::probe_sidecar(&app_for_probe, config::FFMPEG_SIDECAR).await;
                 let whisper = models::probe_sidecar(&app_for_probe, config::WHISPER_SIDECAR).await;
+                // El diarizador es OPCIONAL: su ausencia NO baja `dependencies_ok`
+                // (un estudio que solo transcribe sin identificar oradores debe
+                // poder usar el agente igual). Solo lo logueamos como información.
+                let diarize = models::probe_sidecar(&app_for_probe, config::DIARIZE_SIDECAR).await;
+                tracing::info!(sherpa_diarize = ?diarize, "Probe del sidecar de diarización (opcional)");
                 let ok = ffmpeg.is_ok() && whisper.is_ok();
                 if !ok {
                     tracing::warn!(

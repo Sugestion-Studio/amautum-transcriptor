@@ -88,6 +88,7 @@ async fn health(State(ctx): State<ServerCtx>) -> Json<serde_json::Value> {
 async fn diagnostics(State(ctx): State<ServerCtx>) -> Json<serde_json::Value> {
     let ffmpeg = models::probe_sidecar(&ctx.app, config::FFMPEG_SIDECAR).await;
     let whisper = models::probe_sidecar(&ctx.app, config::WHISPER_SIDECAR).await;
+    let diarize = models::probe_sidecar(&ctx.app, config::DIARIZE_SIDECAR).await;
     let models_dir = models::models_dir(&ctx.app).await;
     let model_present = match &models_dir {
         Ok(dir) => models::first_available_model(dir).await,
@@ -103,6 +104,12 @@ async fn diagnostics(State(ctx): State<ServerCtx>) -> Json<serde_json::Value> {
             "whisperCli": match whisper {
                 Ok(out) => json!({ "ok": true, "version": out }),
                 Err(e) => json!({ "ok": false, "error": e }),
+            },
+            // Opcional: solo se usa cuando el job pide identificar interlocutores.
+            // Que falte aquí no rompe la transcripción normal.
+            "sherpaDiarize": match diarize {
+                Ok(out) => json!({ "ok": true, "optional": true, "version": out }),
+                Err(e) => json!({ "ok": false, "optional": true, "error": e }),
             },
         },
         "models": {

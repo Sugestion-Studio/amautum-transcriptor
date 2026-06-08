@@ -17,10 +17,11 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::Mutex;
 
+use crate::diarize;
 use crate::ffmpeg;
 use crate::models;
 use crate::types::{
-    AgentEvent, AgentTriggerPayload, FailStage, FailUpload, Hardware, ProgressUpload, Segment,
+    AgentEvent, AgentTriggerPayload, FailStage, FailUpload, Hardware, ProgressUpload,
     TranscriptUpload,
 };
 use crate::whisper;
@@ -75,6 +76,8 @@ pub enum PipelineError {
     Ffmpeg(#[from] ffmpeg::FfmpegError),
     #[error("whisper: {0}")]
     Whisper(#[from] whisper::WhisperError),
+    #[error("diarización: {0}")]
+    Diarize(#[from] diarize::DiarizeError),
     #[error("modelo: {0}")]
     Model(#[from] models::ModelError),
     #[error("amautum: {0}")]
@@ -90,6 +93,7 @@ impl PipelineError {
             PipelineError::Model(_) => FailStage::ModelLoad,
             PipelineError::Whisper(whisper::WhisperError::ModelMissing(_)) => FailStage::ModelLoad,
             PipelineError::Whisper(_) => FailStage::Inference,
+            PipelineError::Diarize(_) => FailStage::Diarization,
             PipelineError::Amautum(_) => FailStage::Upload,
             PipelineError::Io(_) => FailStage::Unknown,
         }
@@ -241,7 +245,7 @@ async fn run_inner(
     // sin overhead. Esta es la estrategia por defecto desde v0.1.6 — evita
     // los crasheos por OOM que afectaban a usuarios Windows con audios > 1 h
     // incluso con modelos pequeños.
-    let run = whisper::transcribe_chunked(
+    let mut run = whisper::transcribe_chunked(
         app,
         &pre.wav_path,
         payload.model,
@@ -252,7 +256,37 @@ async fn run_inner(
     )
     .await?;
 
-    // ── 3) Upload al cloud ─────────────────────────────────────────────────
+    // ── 4) Diarización (opcional) ───────────────────────────────────────────
+    // Si el operador pidió identificar interlocutores, corremos sherpa-onnx
+    // sobre el MISMO WAV mono 16 kHz que usó whisper y etiquetamos cada
+    // segmento con su orador. Se hace aquí, no en whisper, porque whisper.cpp
+    // no diariza audio mono — es un paso aparte con sus propios modelos ONNX.
+    let mut speakers: Option<Vec<String>> = None;
+    if payload.diarize {
+        state.ws_hub.publish(AgentEvent::Diarizing {
+            job_id: payload.job_id.clone(),
+        });
+        let (seg_model, emb_model) = models::ensure_diarization_models(app).await?;
+        let result = diarize::diarize_segments(
+            app,
+            &pre.wav_path,
+            &seg_model,
+            &emb_model,
+            payload.num_speakers,
+            &mut run.segments,
+        )
+        .await?;
+        tracing::info!(
+            labeled = result.labeled_segments,
+            speakers = result.speakers.len(),
+            "Diarización completada"
+        );
+        if !result.speakers.is_empty() {
+            speakers = Some(result.speakers);
+        }
+    }
+
+    // ── 5) Upload al cloud ─────────────────────────────────────────────────
     state.ws_hub.publish(AgentEvent::Uploading {
         job_id: payload.job_id.clone(),
     });
@@ -263,7 +297,7 @@ async fn run_inner(
         duration_seconds: pre.duration_seconds,
         full_text: run.full_text,
         segments: run.segments,
-        speakers: None,
+        speakers,
         summary: None,
     };
     let resp = amautum::post_transcript(

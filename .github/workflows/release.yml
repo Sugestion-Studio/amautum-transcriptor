@@ -219,6 +219,53 @@ jobs:
           $dst = (Get-Item "src-tauri/ffmpeg-${{ matrix.target }}.exe").Length
           Write-Host "Copiado al slot sidecar ($dst bytes)"
 
+      # ── Diarización (sherpa-onnx) ───────────────────────────────────────────
+      # Binario `sherpa-onnx-offline-speaker-diarization` de k2-fsa, renombrado
+      # al slot sidecar `sherpa-diarize-<triple>`. Está declarado en
+      # `externalBin` (tauri.conf.json) y en las capabilities, así que es un
+      # sidecar OBLIGATORIO: el bundle falla si no queda en su sitio. Eso es
+      # intencional — la web ofrece el toggle "Identificar interlocutores" y no
+      # queremos publicar un release donde ese botón falle en runtime.
+      #
+      # TODO devops (VALIDAR antes del próximo release — no probado en CI aún):
+      #   1. Confirmar que `SHERPA_ONNX_VERSION` apunta a un release real de
+      #      k2-fsa/sherpa-onnx y que los nombres de asset de abajo coinciden
+      #      (cambian entre versiones).
+      #   2. CRÍTICO: el slot sidecar de Tauri es UN solo archivo. Un build
+      #      `-shared` arrastra libs (.dylib/.so/.dll) que NO se empaquetan y el
+      #      binario no arranca en la máquina del usuario. Hay que usar el build
+      #      ESTÁTICO del ejecutable (mismo problema que whisper-cli en Windows).
+      #   Si necesitas publicar un hotfix ANTES de validar esto, quita
+      #   `sherpa-diarize` de externalBin + capabilities + del loop de verify y
+      #   oculta el toggle en la web; el resto del agente compila igual.
+      - name: Install sherpa-diarize sidecar
+        shell: bash
+        env:
+          SHERPA_ONNX_VERSION: "1.10.46" # ⚠ validar contra releases reales
+        run: |
+          set -euo pipefail
+          EXT=""
+          case "${{ matrix.target }}" in
+            *darwin*)        ASSET="sherpa-onnx-v${SHERPA_ONNX_VERSION}-osx-universal2-static.tar.bz2" ;;
+            *linux*)         ASSET="sherpa-onnx-v${SHERPA_ONNX_VERSION}-linux-x64-static.tar.bz2" ;;
+            *windows*)       ASSET="sherpa-onnx-v${SHERPA_ONNX_VERSION}-win-x64-static.tar.bz2"; EXT=".exe" ;;
+            *) echo "Target no soportado: ${{ matrix.target }}"; exit 1 ;;
+          esac
+          URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_ONNX_VERSION}/${ASSET}"
+          echo "Descargando $URL"
+          curl -L --fail --show-error -o sherpa.tar.bz2 "$URL"
+          mkdir -p sherpa-extract
+          tar -xjf sherpa.tar.bz2 -C sherpa-extract
+          BIN=$(find sherpa-extract -type f -name "sherpa-onnx-offline-speaker-diarization${EXT}" | head -1)
+          if [[ -z "$BIN" ]]; then
+            echo "ERROR: no encontramos sherpa-onnx-offline-speaker-diarization en el tar:"
+            find sherpa-extract -type f | head -40
+            exit 1
+          fi
+          cp "$BIN" "src-tauri/sherpa-diarize-${{ matrix.target }}${EXT}"
+          chmod +x "src-tauri/sherpa-diarize-${{ matrix.target }}${EXT}" || true
+          echo "sherpa-diarize instalado desde $BIN"
+
       - name: Verify sidecar binaries before bundling
         # Aborta el build si CUALQUIER sidecar no quedó en su sitio. Sin esta
         # red de seguridad, una descarga truncada se publicaba como release y
@@ -231,7 +278,7 @@ jobs:
           echo "Contenido de src-tauri/:"
           ls -la src-tauri/ || true
           missing=0
-          for name in whisper-cli ffmpeg; do
+          for name in whisper-cli ffmpeg sherpa-diarize; do
             f="src-tauri/${name}-${{ matrix.target }}${EXT}"
             if [[ ! -f "$f" ]]; then
               echo "✗ FALTA: $f"

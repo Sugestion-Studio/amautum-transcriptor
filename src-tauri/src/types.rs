@@ -22,6 +22,17 @@ pub struct AgentTriggerPayload {
     /// Tamaño esperado del archivo para validación temprana.
     #[serde(default)]
     pub file_size: Option<u64>,
+    /// Si `true`, tras la transcripción corremos diarización (identificación de
+    /// interlocutores) con el sidecar sherpa-onnx y etiquetamos cada segmento
+    /// con su orador. whisper.cpp por sí solo no diariza audio mono; esto es un
+    /// paso aparte. Default `false` para no penalizar a quien no lo necesita.
+    #[serde(default)]
+    pub diarize: bool,
+    /// Número de interlocutores esperado. Si lo conoce el operador (p. ej. una
+    /// audiencia con juez + 2 partes = 3), el clustering es mucho más preciso.
+    /// Si es `None`, el diarizador estima el número solo por umbral.
+    #[serde(default)]
+    pub num_speakers: Option<u8>,
 }
 
 fn default_language() -> String {
@@ -99,8 +110,14 @@ impl Hardware {
 /// Eventos que el pipeline emite hacia los clientes WebSocket de la pestaña.
 /// Cada uno incluye `jobId` para que el cliente pueda filtrar si tiene varias
 /// transcripciones corriendo en paralelo (poco común pero posible).
+///
+/// `rename_all` solo camelCasea los TAGS de variante (el valor de `event`); para
+/// camelCasear también los CAMPOS de cada variante (`job_id` → `jobId`,
+/// `transcript_id` → `transcriptId`…) hace falta `rename_all_fields`. Sin esto
+/// el cliente web leía `ev.transcriptId` y obtenía `undefined`, navegando a
+/// `…/transcriptor-transcript/undefined` (404) al terminar un job.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "event", rename_all = "camelCase")]
+#[serde(tag = "event", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum AgentEvent {
     Queued {
         job_id: String,
@@ -129,6 +146,11 @@ pub enum AgentEvent {
         progress: u8,
         eta_seconds: Option<u64>,
         last_segment: Option<String>,
+    },
+    /// Whisper terminó y arrancamos el paso de diarización (identificación de
+    /// interlocutores). Solo se emite si el job pidió `diarize`.
+    Diarizing {
+        job_id: String,
     },
     Uploading {
         job_id: String,
@@ -207,4 +229,24 @@ pub struct FailUpload {
     pub stage: FailStage,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progreso: Option<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regresión: los CAMPOS de cada variante de `AgentEvent` deben ir en
+    /// camelCase, no solo el tag. Si esto se rompe, el cliente web lee
+    /// `ev.transcriptId` como `undefined` y navega a `…/undefined` (404).
+    #[test]
+    fn agent_event_fields_are_camel_case() {
+        let ev = AgentEvent::Completed {
+            job_id: "j1".into(),
+            transcript_id: "tx-abc".into(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"transcriptId\":\"tx-abc\""), "got: {json}");
+        assert!(json.contains("\"jobId\":\"j1\""), "got: {json}");
+        assert!(!json.contains("transcript_id"), "campo en snake_case: {json}");
+    }
 }
