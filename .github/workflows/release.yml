@@ -341,7 +341,9 @@ jobs:
 
             Para la guía de instalación paso a paso, visita
             https://www.amautum.com/downloads/transcriptor
-          releaseDraft: true
+          # Publicación automática: la release sale publicada (no draft), así la
+          # página de descargas la toma como "latest" sin intervención manual.
+          releaseDraft: false
           prerelease: false
 
       # Renombra los artefactos de Tauri al patrón consistente
