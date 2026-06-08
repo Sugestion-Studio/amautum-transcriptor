@@ -394,3 +394,63 @@ jobs:
           for f in release-assets/*; do
             gh release upload "$VERSION" "$f" --clobber
           done
+
+  # ── Changelog automático ────────────────────────────────────────────────────
+  # Corre UNA vez (no por plataforma) cuando todos los builds terminaron, y
+  # reescribe la descripción de la release con las MEJORAS de esta versión:
+  # los commits desde el tag anterior. Así cada release documenta qué cambió sin
+  # escribir nada a mano.
+  release-notes:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (historial completo + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generar y publicar las notas con las mejoras
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+
+          # Tag de versión anterior (el más reciente que NO es el actual).
+          PREV=$(git tag -l 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n1 || true)
+          if [[ -n "$PREV" ]]; then
+            RANGE="${PREV}..${TAG}"
+            HEADER="### Cambios desde ${PREV}"
+          else
+            RANGE="$TAG"
+            HEADER="### Cambios"
+          fi
+
+          # Commits del rango como viñetas, sin merges ni ruido de release/CI.
+          CHANGES=$(git log --no-merges --pretty=format:'- %s' "$RANGE" \
+            | grep -viE '\[skip ci\]|^- chore\(release\)' || true)
+          [[ -z "$CHANGES" ]] && CHANGES="- Mejoras internas y mantenimiento."
+
+          # Escribimos a archivo para evitar problemas de escaping con gh.
+          cat > _notes.md <<EOF
+          ## Novedades de ${TAG}
+
+          ${HEADER}
+
+          ${CHANGES}
+
+          ---
+
+          ### Descargas
+          - **Mac (chip Apple)** — \`*-macos-arm64.dmg\`
+          - **Mac (chip Intel)** — \`*-macos-x64.dmg\`
+          - **Windows 10/11** — \`*-windows-x64.msi\`
+          - **Linux (cualquier distro)** — \`*-linux-x64.AppImage\`
+          - **Linux (Ubuntu / Debian)** — \`*-linux-x64.deb\`
+
+          Guía de instalación paso a paso: https://www.amautum.com/downloads/transcriptor
+          EOF
+
+          echo "── Notas generadas ──"; cat _notes.md
+          gh release edit "$TAG" --notes-file _notes.md
