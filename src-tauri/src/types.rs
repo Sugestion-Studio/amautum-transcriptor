@@ -155,6 +155,12 @@ pub enum AgentEvent {
     Uploading {
         job_id: String,
     },
+    /// La transcripción terminó pero la subida al cloud falló por red. El acta
+    /// quedó GUARDADA en disco y se reintentará sola al volver la conexión — el
+    /// usuario NO pierde el trabajo.
+    UploadPending {
+        job_id: String,
+    },
     Completed {
         job_id: String,
         transcript_id: String,
@@ -184,14 +190,18 @@ pub struct Segment {
     pub start: f64,
     pub end: f64,
     pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // `default` para que el round-trip a disco (cola de pendientes) funcione:
+    // al serializar omitimos `speaker` si es None, así que al releer puede faltar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
 }
 
 /// Salida estructurada que el agente sube al backend de Amautum cuando
 /// termina. El backend la mapea 1:1 al `transcriptor-transcript` y referencia
 /// al `transcriptor-job` por el id en la URL.
-#[derive(Debug, Serialize)]
+// `Deserialize` además de `Serialize` porque la cola de pendientes en disco
+// (pending.rs) serializa esta estructura y la vuelve a leer para reintentar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct TranscriptUpload {
     pub language: String,
@@ -199,9 +209,9 @@ pub struct TranscriptUpload {
     pub duration_seconds: f64,
     pub full_text: String,
     pub segments: Vec<Segment>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speakers: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
 }
 

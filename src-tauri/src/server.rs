@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        Path, Query, State,
     },
     http::{HeaderValue, Method, StatusCode},
     response::IntoResponse,
@@ -31,8 +31,9 @@ use tower_http::cors::CorsLayer;
 
 use crate::config;
 use crate::models;
+use crate::pending;
 use crate::pipeline::{self, AppState};
-use crate::types::AgentTriggerPayload;
+use crate::types::{AgentEvent, AgentTriggerPayload};
 
 #[derive(Clone)]
 struct ServerCtx {
@@ -58,6 +59,7 @@ pub async fn run(app: AppHandle, state: AppState) -> anyhow::Result<()> {
         .route("/diagnostics", get(diagnostics))
         .route("/files/pick", post(files_pick))
         .route("/jobs/start", post(jobs_start))
+        .route("/jobs/:id/retry", post(jobs_retry))
         .route("/ws", get(ws_handler))
         .with_state(ctx)
         .layer(cors);
@@ -72,13 +74,37 @@ pub async fn run(app: AppHandle, state: AppState) -> anyhow::Result<()> {
 async fn health(State(ctx): State<ServerCtx>) -> Json<serde_json::Value> {
     let jobs = ctx.state.running.load(Ordering::SeqCst);
     let dependencies_ok = ctx.state.dependencies_ok.load(Ordering::SeqCst);
+    // Jobs cuya acta quedó guardada en disco esperando subir (sin conexión).
+    let pending_uploads = pending::list_job_ids(&ctx.app).await;
     Json(json!({
         "ok": dependencies_ok,
         "version": config::version(),
         "busy": jobs > 0,
         "jobsRunning": jobs,
         "dependenciesOk": dependencies_ok,
+        "pendingUploads": pending_uploads,
     }))
+}
+
+/// La pestaña web pide reintentar la subida de un acta que quedó pendiente en
+/// disco (botón "Reintentar"). Disparamos el reintento en background y
+/// respondemos al instante; la web verá el resultado al poolear el listado.
+async fn jobs_retry(
+    State(ctx): State<ServerCtx>,
+    Path(job_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let app = ctx.app.clone();
+    let ws = ctx.state.ws_hub.clone();
+    let id = job_id.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(transcript_id) = pending::retry_one(&app, &id).await {
+            ws.publish(AgentEvent::Completed {
+                job_id: id,
+                transcript_id,
+            });
+        }
+    });
+    Json(json!({ "ok": true, "jobId": job_id, "retrying": true }))
 }
 
 /// Diagnóstico detallado del estado del agente: si los binarios sidecar están

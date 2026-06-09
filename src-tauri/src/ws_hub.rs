@@ -96,6 +96,7 @@ fn job_id_of(event: &AgentEvent) -> &str {
         | AgentEvent::Progress { job_id, .. }
         | AgentEvent::Diarizing { job_id }
         | AgentEvent::Uploading { job_id }
+        | AgentEvent::UploadPending { job_id }
         | AgentEvent::Completed { job_id, .. }
         | AgentEvent::Failed { job_id, .. } => job_id,
     }

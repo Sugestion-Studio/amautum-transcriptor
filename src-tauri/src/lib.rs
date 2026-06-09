@@ -13,6 +13,7 @@ mod config;
 mod diarize;
 mod ffmpeg;
 mod models;
+mod pending;
 mod pipeline;
 mod server;
 mod types;
@@ -136,6 +137,21 @@ pub fn run() {
                     );
                     // Reafirmamos `true` por si alguien lo cambió. No-op si ya estaba.
                     deps_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            });
+
+            // Reintento de actas pendientes de subir: si una transcripción
+            // terminó pero no se pudo subir (sin internet), quedó guardada en
+            // disco. La reintentamos al arrancar (tras un respiro para que la
+            // red levante) y luego cada 5 min. Así un corte de conexión no
+            // pierde el trabajo: el job se completa solo cuando vuelve la red.
+            let app_for_pending = app.handle().clone();
+            let ws_for_pending = state.ws_hub.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                loop {
+                    pending::retry_all(&app_for_pending, &ws_for_pending).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
                 }
             });
 

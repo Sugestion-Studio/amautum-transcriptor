@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 use crate::diarize;
 use crate::ffmpeg;
 use crate::models;
+use crate::pending;
 use crate::types::{
     AgentEvent, AgentTriggerPayload, FailStage, FailUpload, Hardware, ProgressUpload, Segment,
     TranscriptUpload,
@@ -121,10 +122,19 @@ async fn run_job(
 
     let res = run_inner(app, &state, &payload, tempdir.path()).await;
     match res {
-        Ok(transcript_id) => {
+        Ok(JobOutcome::Completed(transcript_id)) => {
             state.ws_hub.publish(AgentEvent::Completed {
                 job_id: payload.job_id.clone(),
                 transcript_id,
+            });
+            Ok(())
+        }
+        Ok(JobOutcome::UploadPending) => {
+            // El acta se guardó en disco y se reintentará sola. NO reportamos
+            // fallo al cloud (igual no hay conexión) ni perdemos el trabajo: el
+            // cloud queda en "procesando" hasta que el reintento la suba.
+            state.ws_hub.publish(AgentEvent::UploadPending {
+                job_id: payload.job_id.clone(),
             });
             Ok(())
         }
@@ -137,12 +147,21 @@ async fn run_job(
     }
 }
 
+/// Resultado de procesar un job de punta a punta.
+enum JobOutcome {
+    /// El acta se subió al cloud. Trae el `transcript_id` que devolvió el backend.
+    Completed(String),
+    /// La transcripción terminó pero la subida falló por red; el acta quedó
+    /// guardada en disco (cola de pendientes) para reintentar más tarde.
+    UploadPending,
+}
+
 async fn run_inner(
     app: &AppHandle,
     state: &AppState,
     payload: &AgentTriggerPayload,
     tempdir: &std::path::Path,
-) -> Result<String, PipelineError> {
+) -> Result<JobOutcome, PipelineError> {
     let source = PathBuf::from(&payload.audio_file_path);
 
     // ── 1) Pre-procesamiento ────────────────────────────────────────────────
@@ -307,39 +326,49 @@ async fn run_inner(
     };
     // El upload es el ÚNICO paso que realmente necesita internet: la
     // transcripción ya está hecha en local. Reintentamos ante caídas de red o
-    // 5xx (con backoff 2/4/8/16 s) para que un parpadeo de conexión no tire el
-    // acta recién transcrita. Errores 4xx (token vencido, payload inválido) NO
-    // se reintentan: no se arreglan esperando.
-    let resp = {
-        let mut attempt: u32 = 0;
-        loop {
-            match amautum::post_transcript(
-                &payload.callbacks.transcript,
-                &payload.token,
-                &upload,
-            )
-            .await
-            {
-                Ok(r) => break r,
-                Err(e) => {
-                    let retriable = matches!(&e, amautum::AmautumError::Network(_))
-                        || matches!(&e, amautum::AmautumError::Rejected { status, .. } if *status >= 500);
-                    if retriable && attempt < 4 {
-                        attempt += 1;
-                        let secs = 2u64.pow(attempt);
-                        tracing::warn!(?e, attempt, secs, "Upload del acta falló — reintentando");
-                        state.ws_hub.publish(AgentEvent::Uploading {
-                            job_id: payload.job_id.clone(),
-                        });
-                        tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-                    } else {
-                        return Err(e.into());
-                    }
+    // 5xx (backoff 2/4/8/16 s). Si los agotamos, en vez de perder el acta la
+    // GUARDAMOS en disco para reintentar al volver la conexión. Errores 4xx
+    // (token vencido, payload inválido) sí son fallo real (no se arreglan
+    // esperando).
+    let mut attempt: u32 = 0;
+    loop {
+        match amautum::post_transcript(&payload.callbacks.transcript, &payload.token, &upload).await
+        {
+            Ok(resp) => return Ok(JobOutcome::Completed(resp.transcript_id)),
+            Err(e) => {
+                let retriable = matches!(&e, amautum::AmautumError::Network(_))
+                    || matches!(&e, amautum::AmautumError::Rejected { status, .. } if *status >= 500);
+                if !retriable {
+                    return Err(e.into());
                 }
+                if attempt < 4 {
+                    attempt += 1;
+                    let secs = 2u64.pow(attempt);
+                    tracing::warn!(?e, attempt, secs, "Upload del acta falló — reintentando");
+                    state.ws_hub.publish(AgentEvent::Uploading {
+                        job_id: payload.job_id.clone(),
+                    });
+                    tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                    continue;
+                }
+                // Agotamos los reintentos inmediatos con un error transitorio:
+                // persistimos el acta y salimos como "pendiente de subida".
+                tracing::warn!(error = %e, "Sin conexión para subir — guardando acta en disco");
+                pending::save(
+                    app,
+                    pending::PendingUpload {
+                        job_id: payload.job_id.clone(),
+                        transcript_callback: payload.callbacks.transcript.clone(),
+                        token: payload.token.clone(),
+                        upload,
+                        saved_at: 0,
+                    },
+                )
+                .await?;
+                return Ok(JobOutcome::UploadPending);
             }
         }
-    };
-    Ok(resp.transcript_id)
+    }
 }
 
 /// Ejecuta el paso de diarización completo (asegurar modelos ONNX + correr el
