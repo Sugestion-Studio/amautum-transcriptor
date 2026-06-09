@@ -220,13 +220,20 @@ async fn ensure_downloaded(
 /// Tamaño mínimo (en bytes) que esperamos del modelo en disco para considerarlo
 /// no-truncado. Valores conservadores: los archivos reales son un poco más
 /// grandes, pero quedan suficiente margen para descartar descargas a medias.
+/// Cota inferior para considerar un modelo NO truncado. DEBE quedar por debajo
+/// del tamaño real del archivo, o el chequeo de "ya descargado" falla siempre y
+/// el modelo se re-baja en cada corrida. Usamos ~90 % del tamaño real (medido
+/// contra HuggingFace) — suficiente para descartar descargas a medias y con
+/// margen de sobra para que un archivo completo pase. Tamaños reales (bytes):
+///   tiny 77_691_713 · base 147_951_465 · small 487_601_967 ·
+///   medium 1_533_763_059 · large-v3 3_095_033_483
 fn min_expected_size(model: WhisperModel) -> u64 {
     match model {
-        WhisperModel::Tiny => 70 * 1024 * 1024,        // ~75 MB
-        WhisperModel::Base => 140 * 1024 * 1024,       // ~142 MB
-        WhisperModel::Small => 460 * 1024 * 1024,      // ~466 MB
-        WhisperModel::Medium => 1_400 * 1024 * 1024,   // ~1.5 GB
-        WhisperModel::LargeV3 => 3_000 * 1024 * 1024,  // ~3.1 GB
+        WhisperModel::Tiny => 60 * 1024 * 1024,        // real ~77.7 MB
+        WhisperModel::Base => 120 * 1024 * 1024,       // real ~148 MB
+        WhisperModel::Small => 420 * 1024 * 1024,      // real ~487 MB
+        WhisperModel::Medium => 1_300 * 1024 * 1024,   // real ~1.53 GB
+        WhisperModel::LargeV3 => 2_700 * 1024 * 1024,  // real ~3.10 GB (antes 3000 → re-bajaba siempre)
     }
 }
 
