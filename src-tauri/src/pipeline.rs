@@ -21,7 +21,7 @@ use crate::diarize;
 use crate::ffmpeg;
 use crate::models;
 use crate::types::{
-    AgentEvent, AgentTriggerPayload, FailStage, FailUpload, Hardware, ProgressUpload,
+    AgentEvent, AgentTriggerPayload, FailStage, FailUpload, Hardware, ProgressUpload, Segment,
     TranscriptUpload,
 };
 use crate::whisper;
@@ -266,23 +266,28 @@ async fn run_inner(
         state.ws_hub.publish(AgentEvent::Diarizing {
             job_id: payload.job_id.clone(),
         });
-        let (seg_model, emb_model) = models::ensure_diarization_models(app).await?;
-        let result = diarize::diarize_segments(
-            app,
-            &pre.wav_path,
-            &seg_model,
-            &emb_model,
-            payload.num_speakers,
-            &mut run.segments,
-        )
-        .await?;
-        tracing::info!(
-            labeled = result.labeled_segments,
-            speakers = result.speakers.len(),
-            "Diarización completada"
-        );
-        if !result.speakers.is_empty() {
-            speakers = Some(result.speakers);
+        // OPCIONAL Y NO-FATAL: si la diarización falla (red al bajar el modelo
+        // ONNX, sidecar ausente, audio con mucho ruido…) NO perdemos el acta ya
+        // transcrita. Degradamos a "sin oradores" y seguimos al upload. Antes un
+        // `?` aquí tiraba el job entero y el usuario perdía toda la transcripción
+        // después de esperar a que whisper terminara.
+        match run_diarization(app, &pre.wav_path, payload.num_speakers, &mut run.segments).await {
+            Ok(result) => {
+                tracing::info!(
+                    labeled = result.labeled_segments,
+                    speakers = result.speakers.len(),
+                    "Diarización completada"
+                );
+                if !result.speakers.is_empty() {
+                    speakers = Some(result.speakers);
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    ?err,
+                    "Diarización falló — se sube la transcripción SIN oradores (no se pierde el acta)"
+                );
+            }
         }
     }
 
@@ -300,13 +305,58 @@ async fn run_inner(
         speakers,
         summary: None,
     };
-    let resp = amautum::post_transcript(
-        &payload.callbacks.transcript,
-        &payload.token,
-        &upload,
-    )
-    .await?;
+    // El upload es el ÚNICO paso que realmente necesita internet: la
+    // transcripción ya está hecha en local. Reintentamos ante caídas de red o
+    // 5xx (con backoff 2/4/8/16 s) para que un parpadeo de conexión no tire el
+    // acta recién transcrita. Errores 4xx (token vencido, payload inválido) NO
+    // se reintentan: no se arreglan esperando.
+    let resp = {
+        let mut attempt: u32 = 0;
+        loop {
+            match amautum::post_transcript(
+                &payload.callbacks.transcript,
+                &payload.token,
+                &upload,
+            )
+            .await
+            {
+                Ok(r) => break r,
+                Err(e) => {
+                    let retriable = matches!(&e, amautum::AmautumError::Network(_))
+                        || matches!(&e, amautum::AmautumError::Rejected { status, .. } if *status >= 500);
+                    if retriable && attempt < 4 {
+                        attempt += 1;
+                        let secs = 2u64.pow(attempt);
+                        tracing::warn!(?e, attempt, secs, "Upload del acta falló — reintentando");
+                        state.ws_hub.publish(AgentEvent::Uploading {
+                            job_id: payload.job_id.clone(),
+                        });
+                        tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                    } else {
+                        return Err(e.into());
+                    }
+                }
+            }
+        }
+    };
     Ok(resp.transcript_id)
+}
+
+/// Ejecuta el paso de diarización completo (asegurar modelos ONNX + correr el
+/// sidecar y etiquetar segmentos). Devuelve un `Result` para que el llamador
+/// decida qué hacer si falla — en el pipeline lo tratamos como NO-FATAL: un
+/// fallo aquí no debe perder la transcripción.
+async fn run_diarization(
+    app: &AppHandle,
+    wav_path: &std::path::Path,
+    num_speakers: Option<u8>,
+    segments: &mut [Segment],
+) -> Result<diarize::DiarizationResult, PipelineError> {
+    let (seg_model, emb_model) = models::ensure_diarization_models(app).await?;
+    let result =
+        diarize::diarize_segments(app, wav_path, &seg_model, &emb_model, num_speakers, segments)
+            .await?;
+    Ok(result)
 }
 
 async fn fail(
