@@ -3,7 +3,10 @@
 //! Endpoints:
 //!   - `GET  /health`        — estado del agente (la ventana de estado y el
 //!                              navegador lo usan).
+//!   - `GET  /status`        — estado detallado para la ventana del agente.
 //!   - `POST /jobs/start`    — la pestaña web dispara un job.
+//!   - `POST /open/:target`  — abre soporte/descargas en el navegador (lista
+//!                              cerrada de destinos, nunca una URL de fuera).
 //!   - `WS   /ws?jobId=...`  — la pestaña se suscribe al stream de eventos.
 //!
 //! CORS estricto: solo `amautum.com` y `localhost:3000`. Otros orígenes
@@ -56,10 +59,12 @@ pub async fn run(app: AppHandle, state: AppState) -> anyhow::Result<()> {
 
     let router = Router::new()
         .route("/health", get(health))
+        .route("/status", get(status))
         .route("/diagnostics", get(diagnostics))
         .route("/files/pick", post(files_pick))
         .route("/jobs/start", post(jobs_start))
         .route("/jobs/:id/retry", post(jobs_retry))
+        .route("/open/:target", post(open_target))
         .route("/ws", get(ws_handler))
         .with_state(ctx)
         .layer(cors);
@@ -82,8 +87,80 @@ async fn health(State(ctx): State<ServerCtx>) -> Json<serde_json::Value> {
         "busy": jobs > 0,
         "jobsRunning": jobs,
         "dependenciesOk": dependencies_ok,
+        "dependenciesError": ctx.state.dependencies_error.lock().clone(),
         "pendingUploads": pending_uploads,
     }))
+}
+
+/// Estado completo para la VENTANA del agente: trabajos vivos, historial
+/// reciente, actas pendientes y bitácora.
+///
+/// La ventana antes solo sabía "hay N trabajos". Con un trabajo de seis horas
+/// eso decía exactamente lo mismo a los dos minutos que a las cinco horas, y no
+/// había en toda la interfaz un lugar donde apareciera un error.
+///
+/// Vive en el mismo servidor local que ya usa el navegador, así que la ventana
+/// no necesita IPC con Rust: una sola fuente de verdad del runtime.
+async fn status(State(ctx): State<ServerCtx>) -> Json<serde_json::Value> {
+    Json(json!({
+        "version": config::version(),
+        "port": config::SERVER_PORT,
+        "dependenciesOk": ctx.state.dependencies_ok.load(Ordering::SeqCst),
+        "dependenciesError": ctx.state.dependencies_error.lock().clone(),
+        "activeJobs": ctx.state.active_jobs(),
+        "jobs": ctx.state.job_snapshot(),
+        "pendingUploads": pending::list_details(&ctx.app).await,
+        "logs": ctx.state.recent_logs(),
+        "update": ctx.state.update.lock().clone(),
+        "nowMs": crate::types::now_ms(),
+    }))
+}
+
+/// Abre en el navegador del sistema uno de los destinos que el agente conoce.
+///
+/// El parámetro es un NOMBRE de una lista cerrada, no una URL. La ventana pide
+/// "abre soporte" y el agente decide a dónde. Un endpoint local que abriera una
+/// URL arbitraria sería una puerta para que cualquier página que logre hablar
+/// con este puerto lance enlaces en el equipo de la persona.
+async fn open_target(
+    State(ctx): State<ServerCtx>,
+    Path(target): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let url = match target.as_str() {
+        "support" => config::support_url(),
+        "downloads" => config::downloads_url(),
+        // Preferimos el enlace DIRECTO al instalador de esta plataforma; si
+        // todavía no pudimos consultar la versión, caemos a la página de
+        // releases (que siempre existe).
+        "release" => ctx
+            .state
+            .update
+            .lock()
+            .as_ref()
+            .map(|u| u.download_url.clone())
+            .unwrap_or_else(crate::updates::releases_page),
+        _ => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Destino desconocido." })),
+            ))
+        }
+    };
+
+    match ctx.app.opener().open_url(url.clone(), None::<String>) {
+        Ok(()) => Ok(Json(json!({ "ok": true, "url": url }))),
+        // Que no se pueda abrir el navegador no es el fin: devolvemos la URL
+        // para que la ventana la pueda mostrar y la persona la copie a mano.
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("No pudimos abrir el navegador: {err}"),
+                "url": url,
+            })),
+        )),
+    }
 }
 
 /// La pestaña web pide reintentar la subida de un acta que quedó pendiente en

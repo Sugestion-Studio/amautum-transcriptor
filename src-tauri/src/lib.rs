@@ -17,6 +17,7 @@ mod pending;
 mod pipeline;
 mod server;
 mod types;
+mod updates;
 mod whisper;
 mod ws_hub;
 
@@ -112,7 +113,7 @@ pub fn run() {
             // como confirmación. Si tarda 200 ms en correr, el navegador no
             // ve un `false` espurio durante esos 200 ms.
             let app_for_probe = app.handle().clone();
-            let deps_flag = state.dependencies_ok.clone();
+            let state_for_probe = state.clone();
             tauri::async_runtime::spawn(async move {
                 let ffmpeg = models::probe_sidecar(&app_for_probe, config::FFMPEG_SIDECAR).await;
                 let whisper = models::probe_sidecar(&app_for_probe, config::WHISPER_SIDECAR).await;
@@ -121,22 +122,64 @@ pub fn run() {
                 // poder usar el agente igual). Solo lo logueamos como información.
                 let diarize = models::probe_sidecar(&app_for_probe, config::DIARIZE_SIDECAR).await;
                 tracing::info!(sherpa_diarize = ?diarize, "Probe del sidecar de diarización (opcional)");
-                let ok = ffmpeg.is_ok() && whisper.is_ok();
-                if !ok {
-                    tracing::warn!(
-                        ffmpeg = ?ffmpeg,
-                        whisper_cli = ?whisper,
-                        "Sidecars no responden al --version inicial"
+
+                // Guardamos el DETALLE del fallo, no solo un booleano: "faltan
+                // componentes" no le sirve a nadie. Con el detalle, la ventana
+                // puede decir «al motor le falta el Visual C++ Redistributable»
+                // y dar el enlace de descarga.
+                let mut problems: Vec<String> = Vec::new();
+                if let Err(err) = &ffmpeg {
+                    problems.push(format!("Conversor de audio (ffmpeg): {err}"));
+                }
+                if let Err(err) = &whisper {
+                    problems.push(format!("Motor de transcripción (whisper): {err}"));
+                }
+
+                if problems.is_empty() {
+                    state_for_probe.log(
+                        "info",
+                        format!(
+                            "Componentes verificados — ffmpeg: {} · motor: {}",
+                            ffmpeg.as_deref().unwrap_or("?"),
+                            whisper.as_deref().unwrap_or("?")
+                        ),
                     );
-                    deps_flag.store(false, std::sync::atomic::Ordering::SeqCst);
-                } else {
-                    tracing::info!(
-                        ffmpeg = ?ffmpeg.as_ref().ok(),
-                        whisper_cli = ?whisper.as_ref().ok(),
-                        "Sidecars verificados"
-                    );
+                    *state_for_probe.dependencies_error.lock() = None;
                     // Reafirmamos `true` por si alguien lo cambió. No-op si ya estaba.
-                    deps_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                    state_for_probe
+                        .dependencies_ok
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                } else {
+                    let detail = problems.join(" · ");
+                    state_for_probe.log("error", format!("Componentes con problemas: {detail}"));
+                    *state_for_probe.dependencies_error.lock() = Some(detail);
+                    state_for_probe
+                        .dependencies_ok
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            });
+
+            // Aviso de versión nueva. Amautum ya avisa en el navegador, pero el
+            // agente vive en la bandeja durante semanas y quien no abre el
+            // asistente nunca se entera. Preguntamos al arrancar (con un respiro
+            // para no competir con el arranque) y cada 6 h.
+            let state_for_updates = state.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                loop {
+                    if let Some(info) = updates::check().await {
+                        if info.available {
+                            state_for_updates.log(
+                                "info",
+                                format!(
+                                    "Hay una versión nueva del agente: v{} (tienes la v{}).",
+                                    info.latest, info.current
+                                ),
+                            );
+                        }
+                        *state_for_updates.update.lock() = Some(info);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
                 }
             });
 

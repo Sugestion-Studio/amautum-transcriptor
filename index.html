@@ -7,39 +7,118 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <main class="status">
-      <header>
-        <h1>Amautum Transcriptor</h1>
-        <p class="subtitle">Agente local de transcripción</p>
+    <main class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span id="pulse" class="pulse" aria-hidden="true"></span>
+          <div>
+            <h1>Amautum Transcriptor</h1>
+            <p id="headline" class="headline">Conectando con el motor local…</p>
+          </div>
+        </div>
+        <span id="chip" class="chip">Iniciando</span>
       </header>
 
-      <section class="card">
-        <div class="row">
-          <span class="label">Estado</span>
-          <span id="state" class="value">Iniciando…</span>
+      <!-- Versión nueva disponible. El botón abre el instalador de ESTA
+           plataforma en el navegador del sistema: sin elegir entre .dmg/.msi ni
+           entre arm64 y x64. -->
+      <section id="update" class="panel panel-update" hidden>
+        <div class="update-head">
+          <h2>Hay una versión nueva: v<span id="update-latest">—</span></h2>
+          <span class="stage">tienes la v<span id="update-current">—</span></span>
         </div>
-        <div class="row">
-          <span class="label">Puerto local</span>
-          <span id="port" class="value mono">—</span>
-        </div>
-        <div class="row">
-          <span class="label">Trabajos en curso</span>
-          <span id="jobs" class="value">0</span>
-        </div>
-        <div class="row">
-          <span class="label">Versión</span>
-          <span id="version" class="value mono">—</span>
+        <p class="detail">
+          Actualizar es abrir el instalador encima de la app actual. No pierdes nada: los
+          modelos ya descargados y las actas pendientes de subir se quedan donde están.
+        </p>
+        <div class="update-actions">
+          <button id="update-download" class="btn btn-primary" type="button">
+            Descargar la actualización
+          </button>
+          <a id="update-notes" class="btn" href="#" target="_blank" rel="noreferrer">Ver novedades</a>
         </div>
       </section>
 
-      <section class="card">
-        <h2>Cómo conectar Amautum</h2>
-        <ol>
-          <li>Mantén este agente abierto mientras transcribes.</li>
-          <li>Abre <a href="https://www.amautum.com" target="_blank" rel="noreferrer">amautum.com</a>, ve a Transcriptor y elige el audio.</li>
+      <!-- Aviso de componentes rotos: lo primero que se ve si el motor no
+           arranca, con la solución concreta, no un "error desconocido". -->
+      <section id="deps" class="panel panel-error" hidden>
+        <h2>Falta un componente para poder transcribir</h2>
+        <p id="deps-detail" class="detail"></p>
+        <p class="detail">
+          Reinstala el agente desde la
+          <button class="linkish" data-open="downloads" type="button">guía de descarga</button>. En
+          Windows, si el mensaje habla de una biblioteca del sistema, instala primero el
+          <a
+            href="https://aka.ms/vs/17/release/vc_redist.x64.exe"
+            target="_blank"
+            rel="noreferrer"
+            >Visual C++ Redistributable (x64)</a
+          >.
+        </p>
+        <button class="btn" data-open="support" type="button">Escribir a soporte</button>
+      </section>
+
+      <!-- Trabajos: vivos arriba, terminados abajo. Se pinta desde /status. -->
+      <section id="jobs" class="stack"></section>
+
+      <section id="empty" class="panel panel-quiet" hidden>
+        <h2>Sin trabajos por ahora</h2>
+        <ol class="steps">
+          <li>Deja este agente abierto mientras transcribes.</li>
+          <li>
+            Abre <a href="https://www.amautum.com" target="_blank" rel="noreferrer">amautum.com</a>,
+            entra a Transcriptor y elige el audio.
+          </li>
           <li>El audio nunca sale de este equipo: solo el texto se sube cuando termina.</li>
         </ol>
       </section>
+
+      <details class="panel panel-quiet">
+        <summary>Si algo se queda quieto</summary>
+        <ul class="tips">
+          <li>
+            <strong>El porcentaje no se mueve.</strong> Es normal en equipos sin tarjeta gráfica
+            dedicada: el motor reporta cada 5%, y en un audio de dos horas eso puede ser un rato
+            largo. Mira la línea «el motor reportó hace…» de la tarjeta: si sigue bajando de un
+            minuto, está trabajando.
+          </li>
+          <li>
+            <strong>Va demasiado lento.</strong> Cancela desde Amautum y relanza con un modelo más
+            pequeño (<em>base</em> o <em>small</em>). La diferencia de tiempo es de horas.
+          </li>
+          <li>
+            <strong>El equipo se suspende.</strong> Desactiva la suspensión automática mientras
+            transcribes: si el equipo duerme, el motor se congela a mitad.
+          </li>
+          <li>
+            <strong>Antivirus.</strong> Autoriza «Amautum Transcriptor» y el puerto local 17173 en
+            tu antivirus o cortafuegos.
+          </li>
+          <li>
+            <strong>Nada de esto encaja.</strong> Pulsa «Copiar diagnóstico» abajo y
+            <button class="linkish" data-open="support" type="button">abre un ticket de soporte</button>.
+            Te respondemos por correo y el historial te queda en Amautum.
+          </li>
+        </ul>
+      </details>
+
+      <details class="panel panel-quiet" id="log-panel">
+        <summary>Bitácora del agente</summary>
+        <ol id="logs" class="logs"></ol>
+      </details>
+
+      <footer class="footer">
+        <div class="meta">
+          <span>v<span id="version">—</span></span>
+          <span class="sep">·</span>
+          <span>puerto <span id="port">—</span></span>
+        </div>
+        <div class="footer-actions">
+          <button id="copy" class="btn btn-ghost" type="button">Copiar diagnóstico</button>
+          <button class="btn btn-ghost" data-open="support" type="button">Soporte</button>
+        </div>
+      </footer>
+      <p id="toast" class="toast" hidden></p>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

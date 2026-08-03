@@ -237,9 +237,19 @@ fn min_expected_size(model: WhisperModel) -> u64 {
     }
 }
 
-/// Verifica que un sidecar binario sea ejecutable corriendo `--version`. Lo
-/// usamos al arranque del agente para detectar problemas de bundling antes de
-/// que el operador encole un job y se choque con ellos a medio camino.
+/// Verifica que un sidecar binario sea REALMENTE ejecutable. Lo usamos al
+/// arranque del agente para detectar problemas de bundling antes de que el
+/// operador encole un job y se choque con ellos a medio camino.
+///
+/// Antes esto rompía el bucle en `Terminated(_)` sin mirar el código de salida
+/// y devolvía `Ok("")` pasara lo que pasara. En Windows eso hacía inútil el
+/// chequeo: un `whisper-cli.exe` al que le falta una DLL arranca, muere de
+/// inmediato con `0xC0000135` y no escribe una sola línea — y el agente seguía
+/// respondiendo `dependenciesOk: true`. El problema solo se descubría horas
+/// después, a mitad de una audiencia.
+///
+/// Ahora exigimos las dos cosas: que el proceso termine bien y que haya dicho
+/// algo. Un binario que no imprime nada no está sano.
 pub async fn probe_sidecar(
     app: &AppHandle,
     name: &str,
@@ -252,17 +262,67 @@ pub async fn probe_sidecar(
     let (mut rx, _child) = cmd.spawn().map_err(|e| e.to_string())?;
 
     let mut output = String::new();
-    while let Some(event) = rx.recv().await {
+    let mut code: Option<i32> = None;
+    let mut terminated = false;
+    // El probe no puede colgar el arranque del agente: si el binario se queda
+    // pensando, lo damos por no verificado y seguimos.
+    let deadline = std::time::Duration::from_secs(30);
+    loop {
+        let next = match tokio::time::timeout(deadline, rx.recv()).await {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(format!(
+                    "{name} no respondió en 30 s (¿antivirus inspeccionando el binario?)"
+                ))
+            }
+        };
+        let Some(event) = next else { break };
         match event {
             CommandEvent::Stdout(line) | CommandEvent::Stderr(line) => {
                 output.push_str(&String::from_utf8_lossy(&line));
+                output.push('\n');
             }
-            CommandEvent::Terminated(_) => break,
+            CommandEvent::Terminated(payload) => {
+                terminated = true;
+                code = payload.code;
+            }
             CommandEvent::Error(err) => return Err(err),
             _ => {}
         }
     }
-    Ok(output.lines().next().unwrap_or("").trim().to_string())
+
+    let first_line = output
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string();
+
+    // `whisper-cli` no conoce `--version`: imprime su ayuda y sale con 0. Eso
+    // nos sirve igual — lo que verificamos es que el binario ARRANCA.
+    if first_line.is_empty() {
+        return Err(match code {
+            Some(-1073741515) => format!(
+                "{name} no arrancó: falta una biblioteca del sistema (DLL). Instala el «Microsoft \
+                 Visual C++ Redistributable (x64)»."
+            ),
+            Some(c) => format!("{name} terminó con el código {c} sin imprimir nada"),
+            None => format!("{name} se cerró sin código de salida (¿bloqueado por antivirus?)"),
+        });
+    }
+    if terminated && matches!(code, Some(c) if c != 0) && !looks_like_usage(&output) {
+        return Err(format!(
+            "{name} terminó con el código {} — el binario está presente pero no corre bien",
+            code.unwrap_or_default()
+        ));
+    }
+    Ok(first_line)
+}
+
+/// Un binario que responde con su ayuda/uso está vivo aunque devuelva != 0.
+fn looks_like_usage(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    lower.contains("usage") || lower.contains("options") || lower.contains("uso:")
 }
 
 /// Devuelve el primer modelo presente en disco (si existe alguno), útil para

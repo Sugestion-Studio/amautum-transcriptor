@@ -14,6 +14,23 @@ pub const ALLOWED_ORIGINS: &[&str] = &[
     "http://localhost:3000",
 ];
 
+/// Base de Amautum para los enlaces que el agente abre en el navegador del
+/// sistema (soporte, descargas). Es el mismo origen que ya autoriza el CORS de
+/// arriba: el agente se distribuye para la solución Transcriptor de Amautum.
+pub const AMAUTUM_BASE_URL: &str = "https://www.amautum.com";
+
+/// Dónde manda el agente a quien necesita ayuda. Es la MISMA página que el
+/// sidebar de Amautum ("Soporte → Ayuda y tickets"): un solo buzón, con
+/// historial de tickets y respuestas, en vez de un correo suelto que se pierde.
+pub fn support_url() -> String {
+    format!("{AMAUTUM_BASE_URL}/dashboard/support")
+}
+
+/// Guía de instalación paso a paso por sistema operativo.
+pub fn downloads_url() -> String {
+    format!("{AMAUTUM_BASE_URL}/downloads/transcriptor")
+}
+
 /// User-Agent que el agente envía al hacer callback al backend de Amautum.
 /// Se usa para identificar la versión del agente en logs del servidor.
 pub fn user_agent() -> String {
@@ -38,6 +55,36 @@ pub const WHISPER_CHANNELS: u32 = 1;
 /// en disco siguen viviendo en `src-tauri/<name>-<triple>[.exe]`.
 pub const WHISPER_SIDECAR: &str = "whisper-cli";
 pub const FFMPEG_SIDECAR: &str = "ffmpeg";
+
+// ── Ritmos: latido, paciencia y bitácora ────────────────────────────────────
+//
+// El problema que resuelven estas constantes: en un Mac con Metal una audiencia
+// de dos horas se transcribe en veinte minutos y el porcentaje sube cada pocos
+// segundos. En un Windows sin GPU el mismo trabajo puede tardar seis horas y
+// whisper.cpp reporta cada 5% — es decir, cada ~18 minutos de reloj. Sin latido
+// propio, "trabajando bien pero lento" y "colgado" se ven EXACTAMENTE igual.
+
+/// Cada cuánto el agente emite un evento de progreso al WebSocket aunque el
+/// motor no haya reportado nada nuevo. La web marca "atascado" a los 30 s de
+/// silencio, así que el latido tiene que ser bastante más corto que eso.
+pub const HEARTBEAT_INTERVAL_SECS: u64 = 10;
+
+/// Intervalo MÁXIMO entre POSTs de progreso al cloud. El disparo normal es por
+/// salto de 5%; este techo garantiza que el panel del job (y el barrido de
+/// trabajos huérfanos del backend) vea actividad aunque el 5% tarde horas.
+pub const CLOUD_PROGRESS_MAX_INTERVAL_SECS: u64 = 120;
+
+/// Si `whisper-cli` no escribe NADA (ni stdout ni stderr) durante este tiempo,
+/// lo damos por colgado, lo matamos y fallamos con un mensaje accionable.
+/// Generoso a propósito: cargar `large-v3` desde un disco lento puede tardar
+/// varios minutos antes de la primera línea.
+pub const ENGINE_SILENCE_TIMEOUT_SECS: u64 = 25 * 60;
+
+/// Cuántas líneas de bitácora retenemos para la ventana y el diagnóstico.
+pub const LOG_BUFFER_LINES: usize = 300;
+
+/// Cuántos trabajos ya terminados seguimos mostrando en la ventana.
+pub const JOB_HISTORY_LIMIT: usize = 8;
 
 /// Sidecar de diarización: el binario `sherpa-onnx-offline-speaker-diarization`
 /// de sherpa-onnx (k2-fsa), renombrado al instalar para seguir la convención

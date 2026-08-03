@@ -146,6 +146,12 @@ pub enum AgentEvent {
         progress: u8,
         eta_seconds: Option<u64>,
         last_segment: Option<String>,
+        /// Nota legible de QUÉ está pasando ahora mismo ("tramo 5 de 12", "el
+        /// motor lleva 12 min sin reportar"). El porcentaje solo no distingue
+        /// "lento" de "colgado"; esta nota sí. Campo aditivo: un cliente que no
+        /// lo entienda lo ignora.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
     },
     /// Whisper terminó y arrancamos el paso de diarización (identificación de
     /// interlocutores). Solo se emite si el job pidió `diarize`.
@@ -241,6 +247,79 @@ pub struct FailUpload {
     pub progreso: Option<u8>,
 }
 
+// ── Estado observable del agente ────────────────────────────────────────────
+//
+// El WebSocket sirve a la pestaña web y muere con ella. La VENTANA del agente
+// necesita algo distinto: poder abrirse a las tres horas de haber empezado y
+// contar qué está pasando. Para eso el agente mantiene un registro vivo de sus
+// trabajos y un buffer de bitácora, que sirve por `GET /status`.
+
+/// En qué etapa está un trabajo. Es lo que la ventana pinta como titular.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JobStage {
+    Queued,
+    DownloadingModel,
+    Preprocess,
+    Transcribing,
+    Diarizing,
+    Uploading,
+    UploadPending,
+    Completed,
+    Failed,
+}
+
+impl JobStage {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, JobStage::Completed | JobStage::Failed)
+    }
+}
+
+/// Foto del estado de un trabajo. `engine_seen_at_ms` es la clave del rediseño:
+/// permite a la ventana decir "el motor reportó hace 14 minutos" en vez de dejar
+/// una barra congelada sin explicación.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobStatus {
+    pub job_id: String,
+    pub file_name: String,
+    pub model: String,
+    pub hardware: Option<String>,
+    pub stage: JobStage,
+    pub progress: u8,
+    pub eta_seconds: Option<u64>,
+    /// Duración del audio, para poder mostrar "2 h 14 min de audio".
+    pub audio_seconds: Option<f64>,
+    /// Nota de la etapa actual (tramo N de M, etc.).
+    pub note: Option<String>,
+    pub started_at_ms: u64,
+    /// Última vez que el MOTOR dio señales de vida (no el latido del agente).
+    pub engine_seen_at_ms: u64,
+    pub updated_at_ms: u64,
+    pub error: Option<String>,
+    /// Qué debe hacer la persona. Nunca dejamos un error sin una salida.
+    pub hint: Option<String>,
+}
+
+/// Una línea de la bitácora que la ventana muestra y que el botón "Copiar
+/// diagnóstico" vuelca al portapapeles para soporte.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogEntry {
+    pub at_ms: u64,
+    pub level: &'static str,
+    pub text: String,
+}
+
+/// Milisegundos desde epoch. Un reloj que no puede fallar hacia atrás en la UI:
+/// si el sistema devuelve algo anterior a epoch, devolvemos 0 en vez de romper.
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +337,41 @@ mod tests {
         assert!(json.contains("\"transcriptId\":\"tx-abc\""), "got: {json}");
         assert!(json.contains("\"jobId\":\"j1\""), "got: {json}");
         assert!(!json.contains("transcript_id"), "campo en snake_case: {json}");
+    }
+
+    /// La nota del progreso es ADITIVA: cuando no hay nada que contar, el evento
+    /// tiene que salir idéntico al de antes para no confundir a un cliente viejo.
+    #[test]
+    fn progress_note_is_omitted_when_empty() {
+        let sin_nota = AgentEvent::Progress {
+            job_id: "j1".into(),
+            progress: 42,
+            eta_seconds: Some(600),
+            last_segment: None,
+            note: None,
+        };
+        let json = serde_json::to_string(&sin_nota).unwrap();
+        assert!(!json.contains("note"), "no debería emitir `note`: {json}");
+
+        let con_nota = AgentEvent::Progress {
+            job_id: "j1".into(),
+            progress: 42,
+            eta_seconds: None,
+            last_segment: None,
+            note: Some("tramo 3 de 8".into()),
+        };
+        let json = serde_json::to_string(&con_nota).unwrap();
+        assert!(json.contains("\"note\":\"tramo 3 de 8\""), "got: {json}");
+    }
+
+    /// La ventana decide qué podar y qué seguir mostrando a partir de esto.
+    #[test]
+    fn only_completed_and_failed_are_terminal() {
+        assert!(JobStage::Completed.is_terminal());
+        assert!(JobStage::Failed.is_terminal());
+        assert!(!JobStage::Transcribing.is_terminal());
+        // Un acta pendiente de subir NO está terminada: sigue habiendo trabajo
+        // por hacer y la ventana tiene que ofrecer el reintento.
+        assert!(!JobStage::UploadPending.is_terminal());
     }
 }

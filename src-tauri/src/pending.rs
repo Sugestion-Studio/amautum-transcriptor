@@ -97,6 +97,38 @@ pub async fn list_job_ids(app: &AppHandle) -> Vec<String> {
     out
 }
 
+/// Resumen de un acta pendiente para pintarla en la ventana del agente. Solo
+/// IDs no alcanza: la persona necesita ver de qué acta se trata, cuánto lleva
+/// esperando y qué tan grande es lo que está en riesgo.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingSummary {
+    pub job_id: String,
+    pub saved_at: u64,
+    pub duration_seconds: f64,
+    pub characters: usize,
+    pub language: String,
+    pub model: String,
+}
+
+pub async fn list_details(app: &AppHandle) -> Vec<PendingSummary> {
+    let mut out = Vec::new();
+    for job_id in list_job_ids(app).await {
+        if let Some(p) = load(app, &job_id).await {
+            out.push(PendingSummary {
+                job_id: p.job_id,
+                saved_at: p.saved_at,
+                duration_seconds: p.upload.duration_seconds,
+                characters: p.upload.full_text.chars().count(),
+                language: p.upload.language,
+                model: p.upload.model,
+            });
+        }
+    }
+    out.sort_by_key(|p| p.saved_at);
+    out
+}
+
 async fn load(app: &AppHandle, job_id: &str) -> Option<PendingUpload> {
     let dir = pending_dir(app).await.ok()?;
     let bytes = fs::read(job_file(&dir, job_id)).await.ok()?;

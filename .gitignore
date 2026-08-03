@@ -7,8 +7,18 @@ dist/
 src-tauri/target/
 src-tauri/Cargo.lock
 src-tauri/.cargo/
+# Generado por `tauri build`/`tauri dev`; no es fuente.
+src-tauri/gen/
 
 # Sidecar binaries — los descarga el CI o el dev local (ver src-tauri/binaries/README.md)
+#
+# Tauri los resuelve PLANOS, en `src-tauri/<nombre>-<triple>[.exe]` (ver config.rs
+# y el paso "Install ... into sidecar slot" del workflow de release). La lista
+# de abajo solo cubría `src-tauri/binaries/`, que es donde NO están: quien dejara
+# los binarios en su sitio real se los llevaba al commit, decenas de MB cada uno.
+src-tauri/whisper-cli-*
+src-tauri/ffmpeg-*
+src-tauri/sherpa-diarize-*
 src-tauri/binaries/whisper-cli*
 src-tauri/binaries/ffmpeg*
 src-tauri/binaries/*.bin
