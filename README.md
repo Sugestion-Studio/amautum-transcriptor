@@ -119,9 +119,9 @@ Para administradores de TI: cada release viene con sus checksums SHA-256 y, cuan
 
 ## Soporte
 
-- **Usuarios finales**: contacta a tu administrador del estudio o escribe a [soporte@amautum.com](mailto:soporte@amautum.com).
+- **Usuarios finales**: contacta a tu administrador del estudio o escribe a [support@amautum.com](mailto:support@amautum.com).
 - **Administradores de TI**: abre un [issue](https://github.com/Sugestion-Studio/amautum-transcriptor/issues) en este repo.
-- **Reporte de seguridad**: escribe en privado a [security@amautum.com](mailto:security@amautum.com). No abras un issue público si encuentras una vulnerabilidad.
+- **Reporte de seguridad**: escribe en privado a [support@amautum.com](mailto:support@amautum.com). No abras un issue público si encuentras una vulnerabilidad.
 
 ## Licencia
 
