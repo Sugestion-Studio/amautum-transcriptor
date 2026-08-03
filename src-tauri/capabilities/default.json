@@ -1,8 +1,10 @@
 {
   "$schema": "https://schema.tauri.app/config/2.0.0",
   "identifier": "default",
-  "description": "Capacidades del agente: ejecutar sidecar binaries de whisper-cli y ffmpeg. El de diarización (sherpa-diarize) lo inyecta el CI cuando está disponible.",
-  "windows": ["main"],
+  "description": "Capacidades del agente: ejecutar sidecar binaries de whisper-cli y ffmpeg, y actualizarse a sí mismo. El de diarización (sherpa-diarize) lo inyecta el CI cuando está disponible.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     {
@@ -22,6 +24,7 @@
     },
     "opener:default",
     "dialog:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "updater:default"
   ]
 }

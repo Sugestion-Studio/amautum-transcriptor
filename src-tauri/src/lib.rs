@@ -34,6 +34,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let state = pipeline::AppState::new();
             app.manage(state.clone());
@@ -164,11 +165,13 @@ pub fn run() {
             // asistente nunca se entera. Preguntamos al arrancar (con un respiro
             // para no competir con el arranque) y cada 6 h.
             let state_for_updates = state.clone();
+            let app_for_updates = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(20)).await;
                 loop {
                     if let Some(info) = updates::check().await {
-                        if info.available {
+                        let available = info.available;
+                        if available {
                             state_for_updates.log(
                                 "info",
                                 format!(
@@ -178,6 +181,21 @@ pub fn run() {
                             );
                         }
                         *state_for_updates.update.lock() = Some(info);
+
+                        // Actualización silenciosa: solo con el agente OCIOSO.
+                        // `install_update` reinicia y no vuelve si lo consigue;
+                        // si hay trabajo en curso devuelve error y se reintenta
+                        // en el siguiente ciclo. Ver el comentario largo de
+                        // updates.rs — reiniciar a mitad de una transcripción
+                        // destruiría horas de CPU.
+                        if available {
+                            let _ = updates::install_update(
+                                &app_for_updates,
+                                &state_for_updates,
+                                true,
+                            )
+                            .await;
+                        }
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
                 }

@@ -19,11 +19,62 @@ pub const ALLOWED_ORIGINS: &[&str] = &[
 /// arriba: el agente se distribuye para la solución Transcriptor de Amautum.
 pub const AMAUTUM_BASE_URL: &str = "https://www.amautum.com";
 
+/// Identificador de esta app en el canal de soporte. Amautum va a tener varias
+/// apps de escritorio; todas abren el mismo buzón y se distinguen por esto.
+pub const SUPPORT_APP_SLUG: &str = "transcriptor";
+
 /// Dónde manda el agente a quien necesita ayuda. Es la MISMA página que el
 /// sidebar de Amautum ("Soporte → Ayuda y tickets"): un solo buzón, con
 /// historial de tickets y respuestas, en vez de un correo suelto que se pierde.
-pub fn support_url() -> String {
-    format!("{AMAUTUM_BASE_URL}/dashboard/support")
+///
+/// El enlace lleva la app, la versión, el sistema y —si hay— qué falló, para que
+/// el formulario aparezca con los datos técnicos ya puestos y la persona solo
+/// tenga que contar lo suyo. Contrato común a todas las apps de escritorio:
+/// ver `lib/support/app-context.ts` en Amautum.
+pub fn support_url(context: Option<&str>) -> String {
+    let mut url = format!(
+        "{AMAUTUM_BASE_URL}/dashboard/support?app={SUPPORT_APP_SLUG}&v={}&os={}",
+        urlencode(version()),
+        urlencode(&os_label()),
+    );
+    if let Some(ctx) = context {
+        // Recortamos aquí también: el otro lado lo recorta, pero una URL de
+        // varios kB se rompe en el camino antes de llegar.
+        let trimmed: String = ctx.chars().take(400).collect();
+        url.push_str(&format!("&ctx={}", urlencode(&trimmed)));
+    }
+    url
+}
+
+/// Sistema operativo en lenguaje de persona, no de compilador.
+fn os_label() -> String {
+    let os = if cfg!(target_os = "windows") {
+        "Windows"
+    } else if cfg!(target_os = "macos") {
+        "macOS"
+    } else {
+        "Linux"
+    };
+    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
+    format!("{os} {arch}")
+}
+
+/// Percent-encoding mínimo para meter texto en un query string.
+///
+/// A mano y no con una dependencia nueva: son cuatro reglas y el alternativo es
+/// arrastrar un crate entero para construir una URL.
+fn urlencode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char)
+            }
+            b' ' => out.push_str("%20"),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
 }
 
 /// Guía de instalación paso a paso por sistema operativo.
@@ -118,3 +169,27 @@ pub const DIARIZE_EMBEDDING_MODEL: &str = "3dspeaker_speech_eres2net_base_sv_zh-
 pub const DIARIZE_EMBEDDING_URL: &str = "https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/main/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx";
 /// Cota inferior de tamaño para detectar descargas truncadas (~38 MB reales).
 pub const DIARIZE_EMBEDDING_MIN_BYTES: u64 = 20 * 1024 * 1024;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// El contexto viaja por la URL: si no se escapa, un error con `&` o un
+    /// salto de línea corta el query string y el ticket llega mutilado.
+    #[test]
+    fn support_url_escapes_the_context() {
+        let url = support_url(Some("audiencia & prueba\nlínea 2"));
+        assert!(url.contains("app=transcriptor"), "{url}");
+        assert!(url.contains("%26"), "el & sin escapar corta la URL: {url}");
+        assert!(!url.contains('\n'), "salto de línea crudo en la URL: {url}");
+        assert!(!url.contains(" & "), "{url}");
+    }
+
+    /// Sin contexto no se manda el parámetro vacío.
+    #[test]
+    fn support_url_without_context_has_no_ctx() {
+        let url = support_url(None);
+        assert!(!url.contains("ctx="), "{url}");
+        assert!(url.contains("os="), "{url}");
+    }
+}

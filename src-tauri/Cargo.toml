@@ -1,6 +1,6 @@
 [package]
 name = "amautum-transcriptor-agent"
-version = "0.1.11"
+version = "0.1.12"
 description = "Agente local de transcripción de audiencias con Whisper.cpp para Amautum"
 authors = ["Amautum"]
 edition = "2021"
@@ -18,6 +18,8 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# Actualización dentro de la app. Ver `updates.rs` y el paso de firma del CI.
+tauri-plugin-updater = "2"
 
 # HTTP + WebSocket
 axum = { version = "0.7", features = ["ws", "macros"] }

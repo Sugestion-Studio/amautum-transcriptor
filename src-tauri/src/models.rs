@@ -237,19 +237,37 @@ fn min_expected_size(model: WhisperModel) -> u64 {
     }
 }
 
+/// Flag con el que cada sidecar dice su versión.
+///
+/// **No son intercambiables.** `ffmpeg` no conoce `--version`: imprime su banner
+/// y sale con **código 8**. `whisper-cli` sí lo conoce y sale con 0. Pasarle a
+/// ffmpeg el flag de whisper es lo que rompió el chequeo en la v0.1.11: el
+/// agente declaraba `dependenciesOk: false`, el asistente deshabilitaba el botón
+/// de elegir archivo, y el cliente instalaba el programa para no poder usarlo —
+/// con un ffmpeg que funcionaba perfectamente.
+fn version_flag(name: &str) -> &'static str {
+    if name == crate::config::FFMPEG_SIDECAR {
+        "-version"
+    } else {
+        "--version"
+    }
+}
+
 /// Verifica que un sidecar binario sea REALMENTE ejecutable. Lo usamos al
 /// arranque del agente para detectar problemas de bundling antes de que el
 /// operador encole un job y se choque con ellos a medio camino.
 ///
-/// Antes esto rompía el bucle en `Terminated(_)` sin mirar el código de salida
-/// y devolvía `Ok("")` pasara lo que pasara. En Windows eso hacía inútil el
-/// chequeo: un `whisper-cli.exe` al que le falta una DLL arranca, muere de
-/// inmediato con `0xC0000135` y no escribe una sola línea — y el agente seguía
-/// respondiendo `dependenciesOk: true`. El problema solo se descubría horas
-/// después, a mitad de una audiencia.
+/// **Lo que se comprueba es que el binario ARRANQUE Y HABLE**, no que devuelva
+/// cero. Esa distinción es todo el chequeo:
 ///
-/// Ahora exigimos las dos cosas: que el proceso termine bien y que haya dicho
-/// algo. Un binario que no imprime nada no está sano.
+///   · Un binario sano imprime su versión, aunque el flag no le guste.
+///   · Un binario al que le falta una DLL en Windows arranca, muere al instante
+///     con `0xC0000135` y **no escribe una sola línea**. Ese es el caso que hay
+///     que cazar, y el silencio es su firma.
+///
+/// Atarse al código de salida en vez de a la salida fue un error caro: un flag
+/// equivocado bastaba para declarar roto un componente que funcionaba. Un código
+/// distinto de cero se registra como aviso, no como fallo.
 pub async fn probe_sidecar(
     app: &AppHandle,
     name: &str,
@@ -258,7 +276,10 @@ pub async fn probe_sidecar(
     use tauri_plugin_shell::ShellExt;
 
     let shell = app.shell();
-    let cmd = shell.sidecar(name).map_err(|e| e.to_string())?.args(["--version"]);
+    let cmd = shell
+        .sidecar(name)
+        .map_err(|e| e.to_string())?
+        .args([version_flag(name)]);
     let (mut rx, _child) = cmd.spawn().map_err(|e| e.to_string())?;
 
     let mut output = String::new();
@@ -298,8 +319,7 @@ pub async fn probe_sidecar(
         .unwrap_or("")
         .to_string();
 
-    // `whisper-cli` no conoce `--version`: imprime su ayuda y sale con 0. Eso
-    // nos sirve igual — lo que verificamos es que el binario ARRANCA.
+    // El silencio es la única señal fiable de un binario que no puede correr.
     if first_line.is_empty() {
         return Err(match code {
             Some(-1073741515) => format!(
@@ -310,20 +330,21 @@ pub async fn probe_sidecar(
             None => format!("{name} se cerró sin código de salida (¿bloqueado por antivirus?)"),
         });
     }
-    if terminated && matches!(code, Some(c) if c != 0) && !looks_like_usage(&output) {
-        return Err(format!(
-            "{name} terminó con el código {} — el binario está presente pero no corre bien",
-            code.unwrap_or_default()
-        ));
+
+    // Habló: el binario corre. Si además salió con un código raro lo dejamos en
+    // el log, pero NO se bloquea a la persona por ello — puede ser simplemente
+    // que a esta versión del binario no le guste el flag.
+    if terminated && matches!(code, Some(c) if c != 0) {
+        tracing::warn!(
+            sidecar = name,
+            code,
+            first_line = %first_line,
+            "El sidecar respondió pero con código distinto de cero"
+        );
     }
     Ok(first_line)
 }
 
-/// Un binario que responde con su ayuda/uso está vivo aunque devuelva != 0.
-fn looks_like_usage(output: &str) -> bool {
-    let lower = output.to_ascii_lowercase();
-    lower.contains("usage") || lower.contains("options") || lower.contains("uso:")
-}
 
 /// Devuelve el primer modelo presente en disco (si existe alguno), útil para
 /// el endpoint /diagnostics.
@@ -340,4 +361,23 @@ pub async fn first_available_model(dir: &Path) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regresión de la v0.1.11: a `ffmpeg` se le pasaba `--version`, que no
+    /// conoce — imprime su banner y sale con **código 8**. El chequeo lo tomó por
+    /// un componente roto, el asistente deshabilitó el botón de elegir archivo, y
+    /// los clientes instalaron un programa que no podían usar con un ffmpeg
+    /// perfectamente sano.
+    ///
+    /// Si algún día se unifican los flags "por limpieza", esto salta.
+    #[test]
+    fn ffmpeg_uses_its_own_version_flag() {
+        assert_eq!(version_flag(crate::config::FFMPEG_SIDECAR), "-version");
+        assert_eq!(version_flag(crate::config::WHISPER_SIDECAR), "--version");
+        assert_eq!(version_flag(crate::config::DIARIZE_SIDECAR), "--version");
+    }
 }

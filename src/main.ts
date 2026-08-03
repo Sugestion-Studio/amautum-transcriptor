@@ -528,12 +528,43 @@ document.addEventListener("click", (ev) => {
     return
   }
   if (target.closest("#update-download")) {
-    void openInBrowser("release")
+    void installUpdate()
     return
   }
   const openTarget = target.closest("[data-open]")?.getAttribute("data-open")
   if (openTarget) void openInBrowser(openTarget as OpenTarget)
 })
+
+/**
+ * Instala la actualización sin pasar por el navegador.
+ *
+ * Normalmente este botón sobra: el agente se actualiza solo en cuanto queda
+ * ocioso. Está para quien no quiere esperar al siguiente ciclo.
+ *
+ * Si el agente está trabajando, el servidor responde 409 y NO reinicia — no se
+ * tira una transcripción en curso por instalar antes. Y si el actualizador no
+ * está disponible (compilación sin llave de firma, o sin red), caemos al camino
+ * de siempre: descargar el instalador del navegador.
+ */
+async function installUpdate() {
+  toast("Instalando la actualización…")
+  try {
+    const res = await fetch(`${BASE}/update/install`, { method: "POST" })
+    if (res.ok) {
+      // Si el reinicio ocurre no llegamos aquí; la ventana se va con el proceso.
+      toast("Actualización instalada. El agente se está reiniciando.")
+      return
+    }
+    const body = (await res.json().catch(() => null)) as { error?: string } | null
+    toast(body?.error ?? "No se pudo instalar la actualización.", "error")
+    // Sin actualizador utilizable, el navegador sigue siendo una salida válida.
+    if (body?.error && !body.error.includes("trabajo en curso")) {
+      void openInBrowser("release")
+    }
+  } catch {
+    toast("No pudimos hablar con el motor local. ¿El agente sigue abierto?", "error")
+  }
+}
 
 type OpenTarget = "support" | "downloads" | "release"
 

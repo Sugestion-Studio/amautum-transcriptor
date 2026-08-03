@@ -1,7 +1,7 @@
 {
   "name": "amautum-transcriptor-agent",
   "private": true,
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Agente de escritorio que transcribe audiencias localmente con Whisper y publica el resultado en Amautum.",
   "type": "module",
   "scripts": {

@@ -159,6 +159,24 @@ impl AppState {
         out
     }
 
+    /// Último fallo del que tenemos noticia, para adjuntarlo al ticket de
+    /// soporte. Primero un componente roto —bloquea todo, así que es lo que hay
+    /// que contar— y si no, el error del trabajo más reciente que falló.
+    pub fn last_error(&self) -> Option<String> {
+        if let Some(deps) = self.dependencies_error.lock().clone() {
+            return Some(format!("Componentes: {deps}"));
+        }
+        let order = self.job_order.lock().clone();
+        for id in order.iter().rev() {
+            if let Some(job) = self.jobs.get(id) {
+                if let Some(err) = job.value().error.clone() {
+                    return Some(format!("{} — {err}", job.value().file_name));
+                }
+            }
+        }
+        None
+    }
+
     pub fn active_jobs(&self) -> usize {
         self.jobs
             .iter()

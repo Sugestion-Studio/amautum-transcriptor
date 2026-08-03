@@ -65,6 +65,7 @@ pub async fn run(app: AppHandle, state: AppState) -> anyhow::Result<()> {
         .route("/jobs/start", post(jobs_start))
         .route("/jobs/:id/retry", post(jobs_retry))
         .route("/open/:target", post(open_target))
+        .route("/update/install", post(update_install))
         .route("/ws", get(ws_handler))
         .with_state(ctx)
         .layer(cors);
@@ -116,6 +117,28 @@ async fn status(State(ctx): State<ServerCtx>) -> Json<serde_json::Value> {
     }))
 }
 
+/// Instala la actualización ahora, sin pasar por el navegador.
+///
+/// Normalmente no hace falta: el agente se actualiza solo cuando queda ocioso.
+/// Este botón es para quien no quiere esperar al siguiente ciclo. Si hay trabajo
+/// en curso responde que no, en vez de reiniciar y destruirlo.
+///
+/// Si el actualizador no está disponible (una compilación sin llave de firma, o
+/// sin red), devuelve el error y la ventana ofrece el camino de siempre:
+/// descargar el instalador del navegador.
+async fn update_install(
+    State(ctx): State<ServerCtx>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    match crate::updates::install_update(&ctx.app, &ctx.state, false).await {
+        // Si el reinicio ocurre, esto no se llega a responder nunca.
+        Ok(()) => Ok(Json(json!({ "ok": true }))),
+        Err(err) => Err((
+            StatusCode::CONFLICT,
+            Json(json!({ "error": err, "fallback": crate::updates::releases_page() })),
+        )),
+    }
+}
+
 /// Abre en el navegador del sistema uno de los destinos que el agente conoce.
 ///
 /// El parámetro es un NOMBRE de una lista cerrada, no una URL. La ventana pide
@@ -129,7 +152,9 @@ async fn open_target(
     use tauri_plugin_opener::OpenerExt;
 
     let url = match target.as_str() {
-        "support" => config::support_url(),
+        // El último fallo viaja con el enlace: quien pide ayuda no debería tener
+        // que transcribir a mano un mensaje de error para que le respondan.
+        "support" => config::support_url(ctx.state.last_error().as_deref()),
         "downloads" => config::downloads_url(),
         // Preferimos el enlace DIRECTO al instalador de esta plataforma; si
         // todavía no pudimos consultar la versión, caemos a la página de

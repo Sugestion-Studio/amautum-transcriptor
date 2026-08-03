@@ -143,6 +143,94 @@ pub fn releases_page() -> String {
     format!("{RELEASES_BASE}/latest")
 }
 
+// ── Actualización silenciosa ────────────────────────────────────────────────
+//
+// POR QUÉ SILENCIOSA
+//
+// Hasta ahora actualizar era un trámite: bajar el instalador del navegador y
+// repetir el ritual del sistema operativo —`xattr -cr` en macOS, «Ejecutar de
+// todos modos» en SmartScreen— **en cada versión**, porque los instaladores no
+// están firmados. Firmar de verdad cuesta dinero (Developer ID de Apple,
+// certificado EV de Windows); el actualizador de Tauri no cuesta nada y elimina
+// el ritual por otra vía: el archivo lo descarga la propia app, no el navegador,
+// así que no recibe la marca de cuarentena ni el *mark-of-the-web* que disparan
+// esos avisos. La firma es nuestra, con una llave minisign propia.
+//
+// CUÁNDO **NO** SE ACTUALIZA — y esto es lo importante
+//
+// Instalar implica reiniciar el agente. Reiniciar a mitad de una transcripción
+// destruiría horas de CPU, que es justo el desastre que este agente existe para
+// evitar. Así que la actualización silenciosa exige que el agente esté OCIOSO:
+//
+//   · Sin trabajos en curso.
+//   · Sin actas pendientes de subir (un reinicio cortaría el reintento).
+//
+// Si hay algo en marcha no se toca nada y se vuelve a mirar en el siguiente
+// ciclo. Un agente ocupado nunca se reinicia solo; uno ocioso se pone al día sin
+// que nadie tenga que enterarse.
+
+/// ¿Se puede reiniciar el agente ahora mismo sin destruir trabajo?
+fn is_idle(state: &crate::pipeline::AppState) -> bool {
+    state.active_jobs() == 0 && state.running.load(std::sync::atomic::Ordering::SeqCst) == 0
+}
+
+/// Descarga e instala la actualización, y reinicia. **No vuelve** si lo logra.
+///
+/// `silent` distingue las dos entradas: el ciclo automático (que se calla si algo
+/// no está en su sitio) y el botón de la ventana (que sí devuelve el error para
+/// poder explicárselo a la persona).
+pub async fn install_update(
+    app: &tauri::AppHandle,
+    state: &crate::pipeline::AppState,
+    silent: bool,
+) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    if !is_idle(state) {
+        let msg = "Hay trabajo en curso: la actualización espera a que el agente quede libre.";
+        if !silent {
+            state.log("info", msg);
+        }
+        return Err(msg.to_string());
+    }
+
+    // Si no hay llave pública configurada, o la red falla, esto devuelve error y
+    // la ventana cae al camino de siempre (descargar desde el navegador).
+    let updater = app
+        .updater()
+        .map_err(|e| format!("El actualizador no está disponible: {e}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("No pudimos comprobar si hay versión nueva: {e}"))?;
+    let Some(update) = update else {
+        return Err("Ya tienes la última versión.".to_string());
+    };
+
+    state.log(
+        "info",
+        format!("Instalando la actualización a la v{}…", update.version),
+    );
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| format!("No se pudo instalar la actualización: {e}"))?;
+
+    // Última comprobación antes de reiniciar: la descarga pudo tardar y en ese
+    // rato la persona puede haber lanzado una transcripción.
+    if !is_idle(state) {
+        state.log(
+            "warn",
+            "La actualización quedó lista, pero entró trabajo mientras se descargaba. \
+             Se aplicará al reiniciar el agente.",
+        );
+        return Ok(());
+    }
+
+    state.log("info", "Actualización instalada. Reiniciando el agente.");
+    app.restart();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
