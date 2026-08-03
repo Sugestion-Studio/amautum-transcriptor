@@ -3,7 +3,6 @@
 > Aplicación de escritorio que transcribe audiencias y declaraciones en la **propia máquina del estudio jurídico**. El audio nunca sale del equipo del cliente; solo el texto sincronizado se sube a Amautum cuando termina.
 
 [![Última versión](https://img.shields.io/github/v/release/Sugestion-Studio/amautum-transcriptor?label=descarga&color=brightgreen)](https://github.com/Sugestion-Studio/amautum-transcriptor/releases/latest)
-[![Estado de los builds](https://img.shields.io/github/actions/workflow/status/Sugestion-Studio/amautum-transcriptor/release.yml?label=build)](https://github.com/Sugestion-Studio/amautum-transcriptor/actions/workflows/release.yml)
 [![Licencia MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](./LICENSE)
 
 ## ¿Qué es esto?
@@ -25,6 +24,10 @@ Ve a la [última release](https://github.com/Sugestion-Studio/amautum-transcript
 | Linux — .deb | `AmautumTranscriptor-<version>-linux-x64.deb` | Ubuntu, Debian, Mint y derivados |
 
 > Para una guía paso a paso de instalación (con los avisos típicos de cada sistema operativo), visita [amautum.com/downloads/transcriptor](https://www.amautum.com/downloads/transcriptor).
+
+Usa siempre la última versión publicada. No hace falta que lo vigiles: la app
+consulta si hay una nueva y te ofrece el instalador de tu sistema en cuanto
+aparece.
 
 ### macOS: aviso "could not verify… is free of malware"
 
@@ -53,7 +56,7 @@ A partir de ahora abre con doble clic limpio — esta versión queda whitelistea
 
 ### Windows: SmartScreen "Windows protegió tu PC"
 
-Es el equivalente: como el `.msi` no está firmado, SmartScreen pregunta. Haz clic en **Más información** → **Ejecutar de todos modos**. La firma con certificado EV está en la lista de cosas por hacer (ver `.github/workflows/release.yml`).
+Es el equivalente: como el `.msi` todavía no está firmado, SmartScreen pregunta. Haz clic en **Más información** → **Ejecutar de todos modos**. La firma con certificado EV está en nuestra hoja de ruta.
 
 ## ¿Cómo funciona?
 
@@ -109,19 +112,15 @@ Los instaladores quedan en `src-tauri/target/release/bundle/`.
 - ✅ Cada trabajo recibe un token de un solo uso firmado por Amautum; sin sesión activa el agente no puede subir nada.
 - ✅ Código abierto bajo licencia MIT — audita lo que quieras.
 
-## Releases
-
-Los releases se publican automáticamente en este repositorio cuando se empuja un tag `v*` (ver [`.github/workflows/release.yml`](.github/workflows/release.yml)).
-
-Para usuarios finales: [usa siempre la última versión publicada](https://github.com/Sugestion-Studio/amautum-transcriptor/releases/latest).
-
-Para administradores de TI: cada release viene con sus checksums SHA-256 y, cuando aplica, con la firma del código de Sugestion S.A.S
-
 ## Soporte
 
-- **Usuarios finales**: contacta a tu administrador del estudio o escribe a [support@amautum.com](mailto:support@amautum.com).
-- **Administradores de TI**: abre un [issue](https://github.com/Sugestion-Studio/amautum-transcriptor/issues) en este repo.
-- **Reporte de seguridad**: escribe en privado a [support@amautum.com](mailto:support@amautum.com). No abras un issue público si encuentras una vulnerabilidad.
+- **Usuarios finales**: abre un ticket desde [Amautum → Soporte](https://www.amautum.com/dashboard/support). Queda con historial y te respondemos al correo de tu cuenta; un correo suelto se pierde. La propia app te lleva ahí desde el botón «Soporte», y si un trabajo falla el enlace aparece junto al error.
+
+  Antes de escribir, pulsa **«Copiar diagnóstico»** en la ventana de la app y pega el resultado en el ticket: trae versión, sistema, estado de los componentes y bitácora. Con eso casi siempre basta para responder a la primera.
+
+- **Sin cuenta de Amautum** (por ejemplo, un técnico que instala la app): escribe a [support@amautum.com](mailto:support@amautum.com).
+- **Administradores de TI**: abre un [issue](https://github.com/Sugestion-Studio/amautum-transcriptor/issues) en este repo para dudas técnicas del código o del empaquetado.
+- **Reporte de seguridad**: escribe en privado a [support@amautum.com](mailto:support@amautum.com) poniendo **[SEGURIDAD]** al inicio del asunto. No abras un issue público si encuentras una vulnerabilidad.
 
 ## Licencia
 
