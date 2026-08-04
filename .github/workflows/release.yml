@@ -542,48 +542,49 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generar y publicar las notas con las mejoras
+      - name: Publicar las notas de la versión
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          git fetch --tags --force
           TAG="${{ needs.decidir.outputs.tag }}"
+          VERSION="${TAG#v}"
 
-          # Tag de versión anterior (el más reciente que NO es el actual).
-          PREV=$(git tag -l 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n1 || true)
-          if [[ -n "$PREV" ]]; then
-            RANGE="${PREV}..${TAG}"
-            HEADER="### Cambios desde ${PREV}"
-          else
-            RANGE="$TAG"
-            HEADER="### Cambios"
+          # Las notas se escriben a mano en CHANGELOG.md, para la persona que
+          # instala el programa. Volcar aquí los mensajes de commit sería
+          # publicar notas internas —"arreglada la advertencia del compilador"—
+          # en la página que lee un abogado buscando si merece la pena actualizar.
+          NOTAS="$(awk -v v="## $VERSION" '
+            $0 == v { on=1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md)"
+
+          if [[ -z "$(printf '%s' "$NOTAS" | tr -d '[:space:]')" ]]; then
+            echo "::warning::CHANGELOG.md no tiene sección para $VERSION; se publican los commits como respaldo."
+            PREV=$(git tag -l 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n1 || true)
+            RANGO="${PREV:+$PREV..}$TAG"
+            NOTAS="$(git log --no-merges --pretty=format:'- %s' "$RANGO" \
+              | grep -viE '\[skip ci\]|^- release:' || echo '- Mejoras internas y mantenimiento.')"
           fi
 
-          # Commits del rango como viñetas, sin merges ni ruido de release/CI.
-          CHANGES=$(git log --no-merges --pretty=format:'- %s' "$RANGE" \
-            | grep -viE '\[skip ci\]|^- chore\(release\)' || true)
-          [[ -z "$CHANGES" ]] && CHANGES="- Mejoras internas y mantenimiento."
-
-          # Escribimos a archivo para evitar problemas de escaping con gh.
           cat > _notes.md <<EOF
-          ## Novedades de ${TAG}
-
-          ${HEADER}
-
-          ${CHANGES}
+          $NOTAS
 
           ---
 
           ### Descargas
-          - **Mac (chip Apple)** — \`*-macos-arm64.dmg\`
-          - **Mac (chip Intel)** — \`*-macos-x64.dmg\`
-          - **Windows 10/11** — \`*-windows-x64.msi\`
-          - **Linux (cualquier distro)** — \`*-linux-x64.AppImage\`
-          - **Linux (Ubuntu / Debian)** — \`*-linux-x64.deb\`
 
-          Guía de instalación paso a paso: https://www.amautum.com/downloads/transcriptor
+          | Sistema | Archivo |
+          | --- | --- |
+          | Mac con chip Apple | \`AmautumTranscriptor-$VERSION-macos-arm64.dmg\` |
+          | Mac con chip Intel | \`AmautumTranscriptor-$VERSION-macos-x64.dmg\` |
+          | Windows 10 / 11 | \`AmautumTranscriptor-$VERSION-windows-x64.msi\` |
+          | Linux | \`AmautumTranscriptor-$VERSION-linux-x64.AppImage\` o \`.deb\` |
+
+          Guía de instalación: https://www.amautum.com/downloads/transcriptor
+          ¿Algo no funciona? https://www.amautum.com/dashboard/support
           EOF
 
-          echo "── Notas generadas ──"; cat _notes.md
+          echo "── Notas ──"; cat _notes.md
           gh release edit "$TAG" --notes-file _notes.md
