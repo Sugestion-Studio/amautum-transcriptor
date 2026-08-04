@@ -86,6 +86,43 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      # Comprueba que la llave de firma y su contraseña encajan, ANTES de
+      # invertir veinte minutos compilando whisper.cpp y Rust.
+      #
+      # Esto salió de un release real: los cuatro sistemas operativos compilaron
+      # entero, empaquetaron sus instaladores y murieron en la última línea con
+      # "incorrect updater private key password". Veinte minutos por plataforma
+      # para descubrir un secret mal puesto. Ahora se descubre en diez segundos.
+      #
+      # La llave y la contraseña se pasan por ENTORNO, nunca por la línea de
+      # comandos: los argumentos aparecen en el log y los secretos no.
+      - name: Verificar la llave de firma del actualizador
+        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -uo pipefail
+          echo "comprobacion" > _sigcheck.txt
+          if npx @tauri-apps/cli signer sign _sigcheck.txt > _sigcheck.log 2>&1; then
+            echo "La llave y la contraseña encajan."
+          else
+            echo "::error::La llave de firma del actualizador y su contraseña NO encajan."
+            echo ""
+            echo "Revisa los secrets del repositorio:"
+            echo "  - TAURI_SIGNING_PRIVATE_KEY          = contenido de tu archivo .key"
+            echo "  - TAURI_SIGNING_PRIVATE_KEY_PASSWORD = la contraseña con la que lo generaste"
+            echo ""
+            echo "Para probar la contraseña en tu equipo antes de volver a subirla:"
+            echo "  npx @tauri-apps/cli signer sign -f ~/.tauri/<tu>.key -p '<contrasena>' un-archivo"
+            echo ""
+            sed -e 's/^/    /' _sigcheck.log
+            exit 1
+          fi
+          rm -f _sigcheck.txt _sigcheck.txt.sig _sigcheck.log
+
+
       - name: Cache whisper.cpp build
         id: cache-whisper
         uses: actions/cache@v4
