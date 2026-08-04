@@ -53,13 +53,6 @@ impl WsHub {
         channel
     }
 
-    /// Devuelve el sender de eventos para `job_id`. Compatibilidad con código
-    /// que retiene el sender mientras dura el pipeline (evita que el canal
-    /// muera si todos los WS se desconectan antes del primer evento).
-    pub fn sender(&self, job_id: &str) -> broadcast::Sender<AgentEvent> {
-        self.channel(job_id).tx
-    }
-
     /// Suscribe a un job. Si ya hubo un evento publicado en este job, lo
     /// devolvemos como `Some(...)` para que el suscriptor lo procese
     /// inmediatamente antes de empezar a leer del receiver. Esto cierra la
