@@ -96,14 +96,23 @@ jobs:
       #
       # La llave y la contraseña se pasan por ENTORNO, nunca por la línea de
       # comandos: los argumentos aparecen en el log y los secretos no.
+      #
+      # La condición «solo si hay llave» va DENTRO del script, no en un `if:`.
+      # El contexto `secrets` no está disponible en los `if:` de un paso —sí en
+      # `env:` y en `with:`—, y usarlo ahí no da un error de ejecución: hace que
+      # GitHub no pueda parsear el workflow entero, así que el run muere sin
+      # lanzar un solo job.
       - name: Verificar la llave de firma del actualizador
-        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -uo pipefail
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "Sin llave de firma configurada: se omite la comprobación."
+            exit 0
+          fi
           echo "comprobacion" > _sigcheck.txt
           if npx @tauri-apps/cli signer sign _sigcheck.txt > _sigcheck.log 2>&1; then
             echo "La llave y la contraseña encajan."
