@@ -138,6 +138,40 @@ EOF
        va en una rama issue-* y llega por PR."
   fi
 
+  # Las notas de la versión las lee quien descarga el instalador, no quien
+  # revisa el código. Se escriben a mano en CHANGELOG.md: volcar ahí los mensajes
+  # de commit publica cosas como "arreglada la advertencia del compilador" en la
+  # página donde un abogado decide si le merece la pena actualizar.
+  #
+  # Aviso, no bloqueo: a veces se prepara la versión antes de redactar las notas.
+  # El CI vuelve a mirar y, si siguen faltando, cae a los commits.
+  if ! grep -q "^## $VERSION\b" CHANGELOG.md 2>/dev/null; then
+    cat <<EOF
+
+⚠  CHANGELOG.md no tiene sección para la $VERSION.
+
+   Añade al principio, bajo el encabezado:
+
+     ## $VERSION
+
+     ### Arreglado
+     - …
+
+     ### Nuevo
+     - …
+
+     ### Al actualizar
+     - …
+
+   Escrito para quien USA el programa: qué le cambia, no qué se tocó por dentro.
+   Sin esta sección el CI publica los mensajes de commit, que son notas internas.
+
+EOF
+  else
+    echo ""
+    echo "  ✓ CHANGELOG.md tiene sección para la $VERSION"
+  fi
+
   step "Fijando la versión $VERSION en los tres archivos donde vive"
   python3 - "$VERSION" <<'PY'
 import json, pathlib, re, sys
