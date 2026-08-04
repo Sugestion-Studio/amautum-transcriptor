@@ -362,6 +362,14 @@ function render(status: Status | null) {
 
   document.getElementById("version")!.textContent = status.version
   document.getElementById("port")!.textContent = String(status.port)
+  document.getElementById("about-version")!.textContent = `v${status.version}`
+  // El mismo dato que viaja al ticket de soporte, para que la persona vea de
+  // antemano qué se adjunta.
+  document.getElementById("about-os")!.textContent = navigator.userAgent.includes("Windows")
+    ? "Windows"
+    : navigator.userAgent.includes("Mac")
+      ? "macOS"
+      : "Linux"
 
   depsEl.hidden = status.dependenciesOk
   document.getElementById("deps-detail")!.textContent =

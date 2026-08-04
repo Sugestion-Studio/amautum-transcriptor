@@ -264,3 +264,10 @@ mod tests {
         );
     }
 }
+
+/// Notas de la versión que está corriendo ahora mismo. Lo usa el menú «Ayuda →
+/// Novedades de esta versión»: quien acaba de actualizarse quiere saber qué
+/// cambió en LA SUYA, no en la última publicada.
+pub fn release_notes_url() -> String {
+    format!("{RELEASES_BASE}/tag/v{}", config::version())
+}

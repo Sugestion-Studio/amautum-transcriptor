@@ -12,6 +12,20 @@ pub const ALLOWED_ORIGINS: &[&str] = &[
     "https://www.amautum.com",
     "https://amautum.com",
     "http://localhost:3000",
+    // La VENTANA del propio agente también es un cliente HTTP de este servidor, y
+    // su origen no es ninguno de los de arriba. Sin estas tres entradas la
+    // ventana no puede hablar con su propio agente: el navegador bloquea cada
+    // petición por CORS y la pantalla se queda en «el motor local no responde»
+    // para siempre, con el agente funcionando perfectamente al otro lado.
+    //
+    // Se descubrió ejecutando la app, no leyendo el código: compila, arranca y
+    // se ve rota solo en pantalla.
+    //
+    // Que sean orígenes locales del propio programa es lo que los hace seguros:
+    // ninguna página de internet puede presentarse como `tauri://`.
+    "tauri://localhost",      // macOS y Linux, app empaquetada
+    "http://tauri.localhost", // Windows, app empaquetada
+    "http://localhost:17172", // `tauri:dev`, donde Vite sirve la ventana
 ];
 
 /// Base de Amautum para los enlaces que el agente abre en el navegador del
