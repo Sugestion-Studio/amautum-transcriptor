@@ -339,7 +339,8 @@ async fn jobs_start(
             Json(json!({"error": "jobId y token son requeridos"})),
         ));
     }
-    if !std::path::Path::new(&payload.audio_file_path).exists() {
+    let audio_path = std::path::Path::new(&payload.audio_file_path);
+    if !audio_path.exists() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -347,6 +348,29 @@ async fn jobs_start(
                 "path": payload.audio_file_path,
             })),
         ));
+    }
+
+    // El navegador manda el tamaño que vio al elegir el archivo. Si en disco hay
+    // otro, es que cambió entre medias: se movió a otra cosa, o se está copiando
+    // todavía desde una unidad de red o un pendrive. Transcribir un archivo a
+    // medio copiar produce un acta truncada que parece buena, y eso se descubre
+    // leyéndola. Mejor pararlo aquí, que es donde se puede explicar.
+    if let Some(expected) = payload.file_size {
+        if let Ok(meta) = std::fs::metadata(audio_path) {
+            if meta.len() != expected {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "El archivo cambió de tamaño desde que lo elegiste. \
+                                  Si lo estás copiando desde otra unidad, espera a que \
+                                  termine y vuelve a intentarlo.",
+                        "path": payload.audio_file_path,
+                        "expectedBytes": expected,
+                        "actualBytes": meta.len(),
+                    })),
+                ));
+            }
+        }
     }
     let job_id = payload.job_id.clone();
     pipeline::spawn_job(ctx.app, ctx.state, payload);

@@ -37,6 +37,12 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let about_metadata = AboutMetadataBuilder::new()
         .name(Some("Amautum Transcriptor"))
         .version(Some(config::version()))
+        // Sin esto el panel «Acerca de» sale con el icono genérico de carpeta:
+        // en `tauri dev` la app corre sin empaquetar y macOS no tiene de dónde
+        // sacarlo. Pasándolo explícitamente sale bien también sin empaquetar, y
+        // no hacen falta features extra de imagen — reusamos el que ya declara
+        // `tauri.conf.json` como icono de ventana.
+        .icon(app.default_window_icon().cloned())
         .comments(Some(
             "Transcribe audiencias y declaraciones en este mismo equipo.\n\n\
              El audio nunca sale de aquí: solo el texto se sube a Amautum cuando termina.",

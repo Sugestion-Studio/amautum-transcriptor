@@ -46,9 +46,12 @@ pub async fn post_fail(
 
 #[derive(serde::Deserialize)]
 pub struct TranscriptResponse {
-    pub ok: bool,
     #[serde(rename = "transcriptId")]
     pub transcript_id: String,
+    /// El backend ya tenía esta acta y devuelve la que guardó en su día. Pasa
+    /// cuando un reintento llega después de que la primera entrega sí funcionara.
+    /// No es un error —el trabajo está completo— pero conviene distinguirlo en la
+    /// bitácora de una entrega nueva.
     #[serde(default, rename = "alreadyDone")]
     pub already_done: bool,
 }
