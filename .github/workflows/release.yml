@@ -23,6 +23,13 @@ name: Release
 
 on:
   push:
+    # Merge a main: si la versión de Cargo.toml todavía no tiene tag, se publica
+    # sola. El bump de versión YA es la decisión de publicar, y viene revisado en
+    # el PR; el tag manual solo añadía una oportunidad de olvidarlo o de ponerlo
+    # en el commit equivocado.
+    branches:
+      - main
+    # Sigue valiendo taggear a mano, para republicar o para casos raros.
     tags:
       - "v*"
   workflow_dispatch:
@@ -35,7 +42,69 @@ permissions:
   contents: write
 
 jobs:
+  # ¿Hay algo que publicar? Se responde en segundos, antes de gastar veinte
+  # minutos por plataforma.
+  #
+  # Un merge a main con la misma versión que el último tag NO publica: los
+  # cambios de documentación, refactors o arreglos de CI pasan sin hacer ruido.
+  decidir:
+    runs-on: ubuntu-latest
+    outputs:
+      publicar: ${{ steps.check.outputs.publicar }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Al taggear a mano (o con workflow_dispatch) manda ese tag.
+          MANUAL="${{ github.event.inputs.version || '' }}"
+          if [[ -n "$MANUAL" ]]; then
+            echo "tag=$MANUAL" >> "$GITHUB_OUTPUT"
+            echo "publicar=true" >> "$GITHUB_OUTPUT"
+            echo "Disparo manual: $MANUAL"; exit 0
+          fi
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "publicar=true" >> "$GITHUB_OUTPUT"
+            echo "Disparo por tag: ${{ github.ref_name }}"; exit 0
+          fi
+
+          # Merge a main: la versión del código manda.
+          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)"
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::no pude leer la versión de src-tauri/Cargo.toml"; exit 1
+          fi
+          TAG="v$VERSION"
+
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "publicar=false" >> "$GITHUB_OUTPUT"
+            echo "El tag $TAG ya existe: este merge no publica nada."
+            exit 0
+          fi
+
+          # Las tres versiones tienen que coincidir. Publicar con `package.json`
+          # o `tauri.conf.json` desincronizados saca instaladores cuyo nombre no
+          # corresponde con lo que reportan.
+          PKG="$(python3 -c "import json;print(json.load(open('package.json'))['version'])")"
+          CONF="$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")"
+          if [[ "$PKG" != "$VERSION" || "$CONF" != "$VERSION" ]]; then
+            echo "::error::versiones desincronizadas — Cargo=$VERSION package.json=$PKG tauri.conf.json=$CONF"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "publicar=true" >> "$GITHUB_OUTPUT"
+          echo "Publicando $TAG desde main."
+
   build:
+    needs: decidir
+    if: needs.decidir.outputs.publicar == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -392,8 +461,8 @@ jobs:
           args: >-
             --target ${{ matrix.target }}
             ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && '--config {"bundle":{"createUpdaterArtifacts":true}}' || '' }}
-          tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: "Amautum Transcriptor ${{ github.event.inputs.version || github.ref_name }}"
+          tagName: ${{ needs.decidir.outputs.tag }}
+          releaseName: "Amautum Transcriptor ${{ needs.decidir.outputs.tag }}"
           releaseBody: |
             Instaladores del agente Amautum Transcriptor.
 
@@ -416,7 +485,7 @@ jobs:
       - name: Normalize asset names
         shell: bash
         run: |
-          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${{ needs.decidir.outputs.tag }}"
           VERSION="${VERSION#v}"   # strip leading v
           BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
           DEST="release-assets"
@@ -454,7 +523,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${{ needs.decidir.outputs.tag }}"
           for f in release-assets/*; do
             gh release upload "$VERSION" "$f" --clobber
           done
@@ -465,7 +534,7 @@ jobs:
   # los commits desde el tag anterior. Así cada release documenta qué cambió sin
   # escribir nada a mano.
   release-notes:
-    needs: build
+    needs: [decidir, build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (historial completo + tags)
@@ -479,7 +548,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --tags --force
-          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          TAG="${{ needs.decidir.outputs.tag }}"
 
           # Tag de versión anterior (el más reciente que NO es el actual).
           PREV=$(git tag -l 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n1 || true)

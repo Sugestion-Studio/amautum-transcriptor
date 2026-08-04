@@ -156,9 +156,20 @@ desde los orígenes de `ALLOWED_ORIGINS` en `src-tauri/src/config.rs`.
 npm run tauri:build
 ```
 
-Quedan en `src-tauri/target/release/bundle/`. Para **publicar** una versión, no
-compiles a mano: usa `bash scripts/release.sh X.Y.Z`, que versiona, prueba,
-taggea y deja que el CI compile las cuatro plataformas.
+Quedan en `src-tauri/target/release/bundle/`.
+
+Para **publicar** no compiles a mano. Basta con que la versión llegue a `main`:
+
+```bash
+bash scripts/release.sh X.Y.Z    # en tu rama: versiona, prueba y commitea
+# PR a develop, PR a main
+```
+
+Al mergear a `main`, el CI ve que `X.Y.Z` no tiene tag, compila las cuatro
+plataformas, crea el tag y publica la release. **Un merge que no cambia la
+versión no publica nada**, así que docs y refactors pasan sin ruido.
+
+`scripts/release.sh X.Y.Z --push` sigue existiendo para taggear a mano.
 
 ## Privacidad y seguridad
 
