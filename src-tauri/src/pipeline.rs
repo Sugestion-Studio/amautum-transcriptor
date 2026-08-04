@@ -747,7 +747,15 @@ async fn run_inner(
     loop {
         match amautum::post_transcript(&payload.callbacks.transcript, &payload.token, &upload).await
         {
-            Ok(resp) => return Ok(JobOutcome::Completed(resp.transcript_id)),
+            Ok(resp) => {
+                if resp.already_done {
+                    // El backend ya la tenía: la primera entrega sí funcionó y
+                    // este era un reintento. El trabajo está completo igual, pero
+                    // dicho así nadie se pregunta por qué hay dos entregas.
+                    state.log("info", "Amautum ya tenía esta acta; se reutiliza la guardada.");
+                }
+                return Ok(JobOutcome::Completed(resp.transcript_id));
+            }
             Err(e) => {
                 let retriable = matches!(&e, amautum::AmautumError::Network(_))
                     || matches!(&e, amautum::AmautumError::Rejected { status, .. } if *status >= 500);
