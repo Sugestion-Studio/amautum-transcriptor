@@ -77,33 +77,88 @@ Es el equivalente: como el `.msi` todavía no está firmado, SmartScreen pregunt
 
 El audio **nunca abandona la computadora** donde corre el agente. Lo único que viaja por internet es el JSON con el texto y las marcas de tiempo de cada frase.
 
-## Compilar desde el código fuente
-
-Si quieres auditar el binario o producir tu propia compilación firmada:
+## Desarrollo local
 
 ### Requisitos
 
 - Rust 1.77+ (`rustup default stable`)
 - Node 20+
 - En macOS: Xcode Command Line Tools (`xcode-select --install`)
-- En Linux: ver [prerrequisitos de Tauri](https://tauri.app/v1/guides/getting-started/prerequisites)
+- En Linux: [prerrequisitos de Tauri](https://tauri.app/start/prerequisites/)
 
-### Pasos
+### Puesta en marcha
 
 ```bash
 git clone https://github.com/Sugestion-Studio/amautum-transcriptor.git
 cd amautum-transcriptor
 npm install
 
-# Necesitas dos binarios "sidecar" antes de compilar:
-#   - whisper-cli (de whisper.cpp)
-#   - ffmpeg
-# Mira src-tauri/binaries/README.md para las instrucciones detalladas.
+bash scripts/setup-dev-sidecars.sh   # coloca whisper-cli y ffmpeg
+npm run tauri:dev
+```
 
+#### Los binarios sidecar
+
+El agente no transcribe por su cuenta: llama a `whisper-cli` (de whisper.cpp) y a
+`ffmpeg`. Esos binarios **no están en el repo** —pesan decenas de MB y son
+distintos por plataforma—, así que hay que colocarlos una vez. Sin ellos el build
+ni siquiera arranca:
+
+```
+resource path `whisper-cli-aarch64-apple-darwin` doesn't exist
+```
+
+`setup-dev-sidecars.sh` los toma de tu instalación de Amautum Transcriptor si la
+tienes —son exactamente los que usa la app publicada— o de tu sistema.
+
+> **Dónde van.** Tauri los busca **planos**, en
+> `src-tauri/<nombre>-<triple>[.exe]`, no dentro de `src-tauri/binaries/`.
+> Ponerlos en la subcarpeta es un error fácil y el mensaje no lo aclara.
+> El triple sale de `rustc -vV | grep host`.
+
+`sherpa-diarize` (identificación de interlocutores) es **opcional**: sin él el
+agente arranca igual y solo falla si un trabajo pide diarización.
+
+### ⚠️ Cierra la app instalada antes de arrancar
+
+Si tienes Amautum Transcriptor instalado, **sal desde el icono de la bandeja**
+antes de `npm run tauri:dev`.
+
+Las dos versiones escuchan en el puerto 17173. Si la instalada arranca primero se
+queda el puerto, y **verás la versión publicada creyendo que ves la tuya**: tus
+cambios parecerán no aplicarse por mucho que recompiles. Comprobar quién tiene el
+puerto:
+
+```bash
+lsof -nP -iTCP:17173 -sTCP:LISTEN
+```
+
+En macOS hay un agravante: `open -b com.amautum.transcriptor.agent` (o cualquier
+cosa que active por *bundle id*) **lanza la app instalada**, no la de desarrollo.
+Para traer al frente la tuya, muéstrala desde su propio icono de bandeja.
+
+### Cómo se ve que va bien
+
+```bash
+curl -s localhost:17173/health
+```
+
+`dependenciesOk: true` significa que los dos sidecars respondieron. Si sale
+`false`, `dependenciesError` dice cuál falló y por qué.
+
+Para el ciclo completo contra la web (crear un trabajo, ver el progreso), hace
+falta Amautum corriendo en `localhost:3000`: el agente solo acepta peticiones
+desde los orígenes de `ALLOWED_ORIGINS` en `src-tauri/src/config.rs`.
+
+### Compilar los instaladores
+
+```bash
 npm run tauri:build
 ```
 
-Los instaladores quedan en `src-tauri/target/release/bundle/`.
+Quedan en `src-tauri/target/release/bundle/`. Para **publicar** una versión, no
+compiles a mano: usa `bash scripts/release.sh X.Y.Z`, que versiona, prueba,
+taggea y deja que el CI compile las cuatro plataformas.
 
 ## Privacidad y seguridad
 
